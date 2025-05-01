@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Babel</title>
+</head>
+<body>
+
+<script src="https://unpkg.com/@babel/standalone@7/babel.js"></script>
+<!--<script>-->
+<!--    Babel.registerPreset('ts', {-->
+<!--      presets: [-->
+<!--          [Babel.]-->
+<!--      ]-->
+<!--    })-->
+<!--</script>-->
+<script type="text/babel" data-type="module" data-presets="env" data-plugins="transform-modules-umd" data-module="baz">
+    export function foo(bar) {
+      console.log("Hiya!")
+    }
+</script>
+<script type="text/babel" data-type="module" data-presets="env" data-plugins="transform-modules-umd">
+    import foo from "baz"
+    foo("Wizard")
+</script>
+
+</body>
+</html>

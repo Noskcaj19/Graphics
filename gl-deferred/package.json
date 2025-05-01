@@ -1,0 +1,21 @@
+{
+  "name": "gl-deferred",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "web-dev-server --node-resolve --open --watch",
+    "build": "esbuild index.js --bundle --outdir=dist"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "esbuild": "^0.17.10"
+  },
+  "devDependencies": {
+    "@web/dev-server": "^0.1.35",
+    "@web/dev-server-esbuild": "^0.3.3",
+    "@web/rollup-plugin-html": "^1.11.0"
+  }
+}

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slots</title>
+  <style>
+    * {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 2px;
+    }
+
+    main {
+      text-align: center;
+    }
+
+    .inline {
+      display: inline-block;
+    }
+
+    #play-game {
+      margin: 3px;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <div id="root"></div>
+  </main>
+  <script>
+    function _() { }
+    _.range = function range(startAt, size) {
+      if (size) return [...Array(size - startAt).keys()].map(i => i + startAt);
+      return [...Array(startAt).keys()];
+    }
+    _.randInt = (x, y) => Math.trunc(Math.random() * y) + 1 + x
+
+    function $(selector) {
+      selector = parseElement(selector)[0]
+      let el
+      if (selector.name) {
+        el = document.getElementsByTagName(selector.name)
+      } else if (selector.id) {
+        el = document.getElementById(selector.id)
+      } else if (selector.className) {
+        el = document.getElementsByClassName(selector.className)
+      }
+      if (!el) return
+      Object.assign(el, {
+        extend: function (children) { children.forEach(c => this.appendChild(c)) }
+      })
+      return el
+    }
+
+    function parseName(str) {
+      let result = /^[A-z0-9-]+/du.exec(str);
+
+      if (result == null) {
+        return [null, str];
+      }
+
+      return [result[0], str.substring(result.indices[0][1])];
+    }
+
+    function parseText(str) {
+      let result = /^\{([^}]+)\}/du.exec(str);
+
+      if (result == null) {
+        return [null, str];
+      }
+
+      return [result[1], str.substring(result.indices[0][1])];
+    }
+
+    function parseIdOrClass(str) {
+      let result = /^(?:\.|#)([A-z-]+)/du.exec(str);
+
+      if (result == null) {
+        return [null, str];
+      }
+
+      return [{
+        type: result[0][0] === "." ? "class" : "id",
+        ident: result[1],
+      }, str.substring(result.indices[1][1])];
+    }
+
+    function parseMultiplicity(str) {
+      let result = /^\*(\d+)/du.exec(str);
+
+      if (result == null) {
+        return [null, str];
+      }
+
+      return [parseInt(result[1]), str.substring(result.indices[0][1])];
+    }
+
+    function parseAll(str, parsers) {
+      let results = {}
+      for (let parser of parsers) {
+        var [data, str] = parser(str)
+
+        if (data !== null) {
+          let {
+            type, ident
+          } = data
+          Object.assign(results, {
+            [type]: ident
+          })
+        }
+      }
+      return [results, str]
+    }
+
+    function parseOptionalIdAndClass(str) {
+      return parseAll(str, [parseIdOrClass, parseIdOrClass])
+    }
+
+    function parseElement(str) {
+      var [name, str] = parseName(str)
+      var [{ id, class: className }, str] = parseOptionalIdAndClass(str)
+      var [text, str] = parseText(str)
+      var [multiplicity, str] = parseMultiplicity(str)
+
+      return [{ name, id, className, text, multiplicity }, str]
+    }
+
+    function h(elDescriptor, attrs, children) {
+      if (typeof attrs == "string") {
+        children = [attrs]
+        attrs = {}
+      }
+      if (!children && attrs instanceof Array) {
+        children = attrs
+        attrs = {}
+      }
+      attrs = attrs || {}
+      let { name, id, className, text, multiplicity } = parseElement(elDescriptor)[0]
+      let el = document.createElement(name)
+      if (id) el.setAttribute("id", id)
+      if (className) el.setAttribute("class", className)
+      if (text) { el.appendChild(document.createTextNode(text)) }
+
+      for (let [attr, val] of Object.entries(attrs)) {
+        if (attr.startsWith("on")) {
+          el.addEventListener(attr.substr(2), val)
+          continue
+        }
+        el.setAttribute(attr, val)
+      }
+
+      for (let child of (children || [])) {
+        if (typeof child == "string") { child = document.createTextNode(child) }
+        el.appendChild(child)
+      }
+
+      if (multiplicity) el = _.range(multiplicity).map(_ => el.cloneNode(true))
+
+      return el
+    }
+  </script>
+  <script>
+    const IMAGES = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M9.785 17.962c0-5.054 1.954-11.41 8.216-11.41 6.264 0 8.217 6.356 8.217 11.41s-1.953 11.41-8.217 11.41c-6.262 0-8.216-6.356-8.216-11.41zm11.596 0c0-2.356-.217-7.193-3.379-7.193s-3.379 4.837-3.379 7.193c0 2.201.217 7.193 3.379 7.193s3.379-4.992 3.379-7.193z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M16.462 11.175h-1.829c-1.488 0-2.108-1.085-2.108-2.139 0-1.085.775-2.14 2.108-2.14h4.402c1.334 0 2.078.961 2.078 2.201V26.74c0 1.551-.992 2.418-2.326 2.418-1.333 0-2.325-.867-2.325-2.418V11.175z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M23.086 24.907c1.365 0 2.42.62 2.42 2.046 0 1.427-1.055 2.047-2.233 2.047H12.917c-1.364 0-2.418-.62-2.418-2.047 0-.65.403-1.209.713-1.581 2.573-3.069 5.364-5.86 7.721-9.271.558-.806 1.085-1.768 1.085-2.884 0-1.271-.961-2.387-2.233-2.387-3.566 0-1.86 5.023-4.837 5.023-1.488 0-2.264-1.054-2.264-2.264 0-3.906 3.473-7.038 7.287-7.038 3.815 0 6.883 2.512 6.883 6.449 0 4.309-4.805 8.589-7.441 11.906h5.673z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M24.109 12.226c0 1.954-.836 3.659-2.542 4.744 2.232 1.024 3.782 3.101 3.782 5.55 0 3.721-3.41 6.853-7.813 6.853-4.589 0-7.441-3.38-7.441-5.829 0-1.209 1.272-2.077 2.388-2.077 2.108 0 1.612 3.628 5.116 3.628 1.612 0 2.915-1.24 2.915-2.884 0-4.341-5.272-1.147-5.272-4.806 0-3.255 4.402-1.054 4.402-4.496 0-1.179-.836-2.078-2.232-2.078-2.945 0-2.542 3.038-4.651 3.038-1.271 0-2.015-1.147-2.015-2.294 0-2.418 3.317-5.023 6.759-5.023 4.466 0 6.604 3.256 6.604 5.674z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M10.769 24.132c-1.519 0-2.17-1.022-2.17-1.829 0-.682.248-1.055.434-1.364L15.979 8.35c.682-1.24 1.55-1.798 3.162-1.798 1.799 0 3.566 1.147 3.566 3.969v9.519h.527c1.209 0 2.17.807 2.17 2.047 0 1.24-.961 2.046-2.17 2.046h-.527v2.636c0 1.644-.651 2.418-2.232 2.418-1.581 0-2.233-.774-2.233-2.418v-2.636h-7.473zm7.473-12.743h-.062l-4.186 8.65h4.248v-8.65z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M16.389 14.489c.744-.155 1.551-.31 2.326-.31 3.752 0 6.418 2.977 6.418 6.604 0 5.178-2.851 8.589-8.216 8.589-2.201 0-6.821-1.427-6.821-4.155 0-1.147.961-2.107 2.108-2.107 1.24 0 2.729 1.984 4.806 1.984 2.17 0 3.288-2.109 3.288-4.062 0-1.86-1.055-3.131-2.977-3.131-1.799 0-2.078 1.023-3.659 1.023-1.209 0-1.829-.93-1.829-1.457 0-.403.062-.713.093-1.054l.774-6.544c.341-2.418.93-2.945 2.418-2.945h7.472c1.428 0 2.264.837 2.264 1.953 0 2.14-1.611 2.326-2.17 2.326h-5.829l-.466 3.286z"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M10.219 21.683c0-4.682 4.744-11.255 7.875-14.17.248-.248.62-.496.992-.744.341-.217.683-.217.931-.217.867 0 2.201 1.147 2.201 2.264 0 .434-.279.806-.651 1.271-1.24 1.519-3.255 3.503-4.279 4.961l.062.062c.558-.248 1.271-.372 1.954-.372 3.721 0 6.479 3.287 6.479 6.945 0 4.03-3.194 7.69-7.783 7.69-4.773-.001-7.781-3.566-7.781-7.69zm4.837 0c0 1.736 1.085 3.225 2.945 3.225 1.768 0 2.946-1.427 2.946-3.225 0-1.643-.992-3.225-2.946-3.225-1.767 0-2.945 1.396-2.945 3.225z"/></svg>',
+    ].map(svg => URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })))
+
+    class SlotMachine {
+      lastWon = 0
+      numbers = [0, 0, 0]
+      #imgEls = []
+
+      constructor(el) {
+        this.#imgEls = h("img.slot-image*3", { src: IMAGES[0], width: 64, height: 64, "data-idx": 0 })
+        el.appendChild(h("div.slot-machine", this.#imgEls))
+      }
+
+      setImage(elIdx, imgIdx) {
+        this.#imgEls[elIdx].src = IMAGES[imgIdx]
+        this.#imgEls[elIdx].alt = imgIdx
+        this.#imgEls[elIdx].dataset["idx"] = imgIdx
+      }
+
+      getImage(elIdx) {
+        return parseInt(this.#imgEls[elIdx].dataset["idx"])
+      }
+
+      scrollImgTo(elIdx, endingIdx, cb) {
+        let iterations = _.randInt(4, 15)
+        let time = 60
+        let startingIdx = this.getImage(elIdx)
+        for (let i in _.range(iterations)) {
+          setTimeout(() => {
+            this.setImage(elIdx, (startingIdx + i) % 7)
+          }, i * time)
+        }
+        setTimeout(() => { this.setImage(elIdx, endingIdx) }, (iterations + 1) * time)
+      }
+
+      play() {
+        this.numbers = _.range(3).map(i => _.randInt(0, 6));
+        this.numbers.map((imgIdx, elIdx) => this.scrollImgTo(elIdx, imgIdx))
+        this.lastWon = this.calcScore()
+        return this.lastWon
+      }
+
+      calcScore() {
+        let n = this.numbers
+        if (n[0] == 0 && n[1] == 0 && n[2] == 0) {
+          return 14
+        } else if (n[0] == n[1] && n[1] == n[2]) {
+          return 7
+        } else if (n[0] == 0 && n[1] == 0 && n[2] != 0) {
+          return 3
+        } else if (n[0] == n[1] && n[0] != 0) {
+          return 2
+        } else if (n[0] == 0) {
+          return 1
+        } else {
+          return 0
+        }
+      }
+
+      remove() {
+        this.#imgEls[0].parentElement.remove()
+      }
+    }
+
+    class Main {
+      #money = 100
+      #machines = []
+      #moneyEl = null
+      #winningEl = null
+
+      constructor() {
+        $("#root").extend([
+          h("h1#money-header", [
+            "Money: $",
+            this.#moneyEl = h("span", `${this.#money}`)
+          ]),
+          h("button#play-game{Play}", { onclick: () => this.playAll() }),
+          this.#winningEl = h("h3"),
+          h("div#slot-container"),
+          h("button{+}", { onclick: () => this.#machines.push(new SlotMachine($("#slot-container"))) }),
+          h("button{-}", { onclick: () => this.#machines.pop().remove() }),
+        ])
+        _.range(3).forEach(x => this.#machines.push(new SlotMachine($("#slot-container"))))
+      }
+
+      get machines() {
+        return this.#machines
+      }
+
+      displayWinner(winnings) {
+        this.#winningEl.innerText = `Winning \$${winnings}`
+      }
+
+      displayLost() {
+        this.#winningEl.innerText = "Game over"
+      }
+
+      playAll() {
+        if (this.#money <= 0) {
+          return
+        }
+        this.#money -= 1;
+        this.#moneyEl.innerText = `${this.#money}`
+        let scores = this.#machines.map(machine => machine.play())
+        let sum = scores.reduce((partial, x) => partial + x, 0)
+        if (sum > 0) {
+          this.displayWinner(sum)
+        } else {
+          this.displayLost()
+        }
+        this.#money += sum
+      }
+    }
+
+    let main = new Main()
+  </script>
+</body>
+
+</html>

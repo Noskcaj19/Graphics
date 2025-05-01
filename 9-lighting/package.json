@@ -1,0 +1,21 @@
+{
+  "name": "engine2-libs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "rollup-plugin-import-file": "^1.0.1",
+    "tsc-silent": "^1.2.2",
+    "typescript": "^4.9.3",
+    "vite": "^4.2.0",
+    "vite-plugin-singlefile": "^0.13.3"
+  },
+  "dependencies": {
+    "gl-matrix": "^3.4.3"
+  }
+}

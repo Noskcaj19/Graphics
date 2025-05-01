@@ -1,0 +1,2891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Adventure</title>
+    <style>
+        * {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 2px;
+        }
+
+        main {
+            text-align: center;
+        }
+
+        .pixels {
+            image-rendering: pixelated;
+        }
+
+        canvas {
+            border: solid black 1px;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <canvas
+            id="root"
+            style="width: 960px"
+            width="1280"
+            height="1024"
+    ></canvas>
+    <div id="ui-inventory"></div>
+    <div id="ui-root"></div>
+</main>
+<script>
+  // libJackson
+
+  Object.defineProperty(Array.prototype, 'removeElement', {
+    value: function (target) {
+      let index = this.indexOf(target)
+      if (index === -1) {
+        return -1
+      }
+      this.splice(index, 1)
+      return this
+    },
+  })
+
+  // A [bad] [partial] reimplementation of the excellent lodash
+  function _() {
+  }
+
+  _.scale = (x, inMin, inMax, outMin, outMax) =>
+      ((x - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin
+  _.deg2rad = (deg) => deg * (Math.PI / 180)
+
+  _.contains = function (container, needle) {
+    return container.find((a) => _.equals(a, needle)) ?? false
+  }
+  _.equals = function (a, b) {
+    if (typeof a !== typeof b) {
+      return false
+    }
+    if (typeof a === 'number' || typeof a === 'string') {
+      return a === b
+    }
+    if (a instanceof Array) {
+      return _.zip(a, b).every(([l, r]) => _.equals(l, r))
+    } else if (a instanceof Object) {
+      return _.zip(Object.entries(a), Object.entries(b)).every(
+          ([l, r]) => _.equals(l, r)
+      )
+    }
+    throw 'todo'
+  }
+
+  _.zip = function () {
+    let out = []
+    let arr = Array.from(arguments)
+    for (
+        let i = 0;
+        i < Math.max(...arr.map((a) => a.length));
+        i++
+    ) {
+      out.push(arr.map((a) => a[i]))
+    }
+    return out
+  }
+  // from a up to b or from 0 to a
+  _.range = function range(a, b) {
+    if (b) {
+      let step = a > b ? -1 : 1
+      let size = a > b ? a - b : b - a
+      return [...Array(size).keys()].map((i) => step * i + a)
+    }
+    return [...Array(a).keys()]
+  }
+  _.map2d = (x, y, fn) => {
+    if (typeof x === 'number') {
+      return _.map2d(_.range(x), _.range(y), fn)
+    } else {
+      return x.map((a) => y.map((b) => fn(a, b))).flat()
+    }
+  }
+  // Inclusive
+  _.randInt = (lower, upper) =>
+      lower + Math.floor(Math.random() * (upper - lower + 1))
+  // -1 to 1
+  _.urandom = () => Math.random() * 2 - 1
+  _.clamp = (lower, upper, val) =>
+      Math.max(Math.min(upper, val), lower)
+  _.signedPow = (base, exponent) => {
+    return base >= 0
+        ? Math.pow(base, exponent)
+        : Math.pow(base, exponent) * -1
+  }
+  // Normal Distribution
+  _.ndRandom = (min, max, skew) => {
+    let u = Math.random(),
+        v = Math.random()
+    let num =
+        Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v)
+    if (num > 1 || num < 0) {
+      num = _.ndRandom(min, max, skew)
+    } else {
+      num = Math.pow(num, skew)
+      num *= max - min
+      num += min
+    }
+    return num
+  }
+
+  Object.defineProperties(Object, {
+    map: {
+      value: (obj, fn) => {
+        return Object.fromEntries(Object.entries(obj).map(fn))
+      },
+    },
+    asyncMap: {
+      value: async (obj, fn) => {
+        return Object.fromEntries(
+            await Promise.all(
+                Object.entries(obj).map(
+                    async (e) => await fn(e)
+                )
+            )
+        )
+      },
+    },
+  })
+
+  function $(selector) {
+    selector = parseElement(selector)[0]
+    let el
+    if (selector.name) {
+      el = document.getElementsByTagName(selector.name)
+    } else if (selector.id) {
+      el = document.getElementById(selector.id)
+    } else if (selector.className) {
+      el = document.getElementsByClassName(selector.className)
+    }
+    if (!el) return
+    Object.assign(el, {
+      extend: function (children) {
+        children.forEach((c) => this.appendChild(c))
+      },
+    })
+    return el
+  }
+
+  function parseName(str) {
+    let result = /^[A-z0-9-]+/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [result[0], str.substring(result.indices[0][1])]
+  }
+
+  function parseText(str) {
+    let result = /^\{([^}]+)\}/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [result[1], str.substring(result.indices[0][1])]
+  }
+
+  function parseIdOrClasses(str) {
+    let result = /^(?:\.([A-z][A-z-.]*))|(?:#([A-z-]+))/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    if (result[0][0] === '.') {
+      return [
+        {
+          type: 'classes',
+          val: result[1].split('.'),
+        },
+        str.substring(result.indices[1][1]),
+      ]
+    } else {
+      return [
+        {type: 'id', val: result[2]},
+        str.substring(result.indices[2][1]),
+      ]
+    }
+  }
+
+  function parseMultiplicity(str) {
+    let result = /^\*(\d+)/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [
+      parseInt(result[1]),
+      str.substring(result.indices[0][1]),
+    ]
+  }
+
+  function parseAll(str, parsers) {
+    let results = {}
+    for (let parser of parsers) {
+      let data
+      ;[data, str] = parser(str)
+
+      if (data !== null) {
+        let {type, val} = data
+        Object.assign(results, {
+          [type]: val,
+        })
+      }
+    }
+    return [results, str]
+  }
+
+  function parseOptionalIdAndClasses(str) {
+    return parseAll(str, [parseIdOrClasses, parseIdOrClasses])
+  }
+
+  function parseElement(str) {
+    var [name, str] = parseName(str)
+    var [{id, classes}, str] = parseOptionalIdAndClasses(str)
+    var [text, str] = parseText(str)
+    var [multiplicity, str] = parseMultiplicity(str)
+
+    return [{name, id, classes, text, multiplicity}, str]
+  }
+
+  function h(elDescriptor, attrs, children) {
+    if (typeof attrs == 'string') {
+      children = [attrs]
+      attrs = {}
+    }
+    if (
+        !children &&
+        (attrs instanceof Array || attrs instanceof Node)
+    ) {
+      children = attrs
+      attrs = {}
+    }
+    children = children instanceof Node ? [children] : children
+    attrs = attrs || {}
+    let {name, id, classes, text, multiplicity} =
+        parseElement(elDescriptor)[0]
+    let el = document.createElement(name)
+    if (id) el.setAttribute('id', id)
+    classes?.forEach((className) => el.classList.add(className))
+    if (text) {
+      el.appendChild(document.createTextNode(text))
+    }
+
+    for (let [attr, val] of Object.entries(attrs)) {
+      if (val === undefined) continue
+      if (attr.startsWith('on')) {
+        el.addEventListener(attr.substring(2), val)
+        continue
+      }
+      if (attr.startsWith('$')) {
+        if (val) el.setAttribute(attr.substring(1), '')
+        continue
+      }
+      el.setAttribute(attr, val)
+    }
+
+    for (let child of children || []) {
+      if (typeof child == 'string') {
+        child = document.createTextNode(child)
+      }
+      el.appendChild(child)
+    }
+
+    if (multiplicity)
+      el = _.range(multiplicity).map((_) => el.cloneNode(true))
+
+    return el
+  }
+
+  class Enum {
+    static named(name) {
+      let found = Object.entries(this).find(
+          ([k, v]) => v?.name === name
+      )
+      if (found) return found[1]
+      throw `Undefined variant "${name}"`
+    }
+
+    static make() {
+      for (let [prop, val] of Object.entries(this)) {
+        Object.defineProperty(val, 'name', {value: prop})
+      }
+    }
+
+    toString() {
+      return `${this.constructor.name}.${this.name}`
+    }
+
+    static* [Symbol.iterator]() {
+      for (let v of Object.values(this)) {
+        if (v instanceof this) {
+          yield v
+        }
+      }
+    }
+  }
+
+  class Path {
+    /**
+     * @type {[number, number][]}
+     */
+    #path
+    #i = 0
+
+    constructor(path) {
+      this.#path = path
+    }
+
+    next() {
+      return this.#path[this.#i++]
+    }
+
+    get remainingPath() {
+      return this.#path.slice(this.#i)
+    }
+
+    get totalPath() {
+      return this.#path
+    }
+
+    get traversedPath() {
+      return this.#path.slice(0, this.#i)
+    }
+
+    get length() {
+      return this.remainingPath.length
+    }
+
+    drawRemaining(ctx) {
+      for (let square of this.remainingPath ?? []) {
+        ctx.drawImage(
+            AssetManager.assets.debugOverlay,
+            square[0] * 64,
+            square[1] * 64
+        )
+      }
+    }
+  }
+
+  function astarSimple(start, end, world) {
+    function neighbors(pos) {
+      return [
+        [pos[0] - 1, pos[1]],
+        [pos[0] + 1, pos[1]],
+        [pos[0], pos[1] - 1],
+        [pos[0], pos[1] + 1],
+      ]
+          .filter(
+              (a) =>
+                  a[0] >= 0 &&
+                  a[1] >= 0 &&
+                  a[0] < world.width &&
+                  a[1] < world.height
+          )
+          .filter((x) => {
+            let entity = world.get(...x)
+            if (entity) {
+              return entity instanceof Player
+            }
+            return true
+          })
+    }
+
+    if (world.get(...end)) {
+      if (!(world.get(...end) instanceof Player)) return null
+    }
+
+    return astar(start, end, manhattan, () => 1, neighbors, world)
+  }
+
+  function astar(start, end, distance, cost, neighbors, gas) {
+    function path(cameFrom, current) {
+      let totalPath = [current]
+      while (cameFrom[current]) {
+        current = cameFrom[current]
+        totalPath.unshift(current)
+      }
+      return new Path(totalPath)
+    }
+
+    let open = [start]
+    let closed = new Map()
+    let cameFrom = {}
+
+    let gScore = {}
+    gScore[start] = 0
+
+    let fScore = {}
+    fScore[start] = distance(start, end)
+
+    function lowestFscore(candidates) {
+      let lowest = Infinity
+      let val = null
+      for (let can of candidates) {
+        let tmp = fScore[can] ?? Infinity
+        if (tmp < lowest) {
+          lowest = tmp
+          val = can
+        }
+      }
+      return val
+    }
+
+    gas ??= 500
+    while (open.length !== 0) {
+      if (gas < 0) throw 'Ran out of gas'
+      let current = lowestFscore(open) // the node in openSet having the lowest fScore[] value
+      if (_.equals(current, end)) {
+        return path(cameFrom, current)
+      }
+
+      open.removeElement(current)
+      closed.set(current.toString(), null)
+      for (let neighbor of neighbors(current)) {
+        if (closed.has(neighbor.toString())) {
+          gas -= 1
+          continue
+        }
+        let tent =
+            (gScore[current] ?? Infinity) +
+            cost(current, neighbor)
+        if (tent < (gScore[neighbor] ?? Infinity)) {
+          cameFrom[neighbor] = current
+          gScore[neighbor] = tent
+          fScore[neighbor] = tent + distance(neighbor, end)
+          if (!_.contains(open, neighbor)) {
+            open.push(neighbor)
+            gas -= 4
+          }
+        }
+      }
+    }
+    throw 'no path'
+  }
+
+  manhattan = function (pos0, pos1) {
+    let d1 = Math.abs(pos1[0] - pos0[0])
+    let d2 = Math.abs(pos1[1] - pos0[1])
+    return d1 + d2
+  }
+
+  // class Vector2 {
+  //     constructor(x, y) {
+  //         this.x = x
+  //         this.y = y
+  //     }
+  //
+  //     dot(other) {
+  //         return this.x * other.x + this.y * other.y;
+  //     }
+  //
+  //     add(other) {
+  //         return new Vector2(this.x + other.x, this.y + other.y)
+  //     }
+  //
+  //     divide(scalar) {
+  //         return new Vector2(this.x / scalar, this.y / scalar)
+  //     }
+  //
+  //     length() {
+  //         return this.dot(this) ** .5
+  //     }
+  //
+  //     normalize() {
+  //         return this.divide(this.length())
+  //     }
+  // }
+
+  // const lerp = (a, b, t) => a + t * (b - a)
+  // const random_points = _.range(16).map(() => _.range(16).map(() => new Vector2(_.urandom(), _.urandom()).normalize()))
+  // let PW = 20 *4
+  // let PH = 16 * 4
+  // const perlin = _.map2d(_.range(PW), _.range(PH), (x, y) => {
+  //     y /= 16
+  //     x /= 16
+  //     let upperLeft = new Vector2(Math.floor(x), Math.floor(y))
+  //     let o = _.map2d(_.range(2), _.range(2), (dy, dx) =>
+  //         random_points[y + dy & 15][x + dx & 15].dot(upperLeft.add(new Vector2(dx - x, dy - y)))
+  //     )
+  //
+  //     o = lerp(lerp(o[0], o[1], x - upperLeft.x),
+  //         lerp(o[2], o[3], x - upperLeft.x),
+  //         y - upperLeft.y)
+  //     return 2 * o + .2
+  // })
+
+  // Bresenham's line drawing algorithm
+  function* line([x0, y0], [x1, y1]) {
+    let dx = Math.abs(x1 - x0)
+    let sx = x0 < x1 ? 1 : -1
+    let dy = -Math.abs(y1 - y0)
+    let sy = y0 < y1 ? 1 : -1
+    let error = dx + dy
+
+    while (true) {
+      yield [x0, y0]
+      if (x0 === x1 && y0 === y1) break
+      let e2 = 2 * error
+      if (e2 >= dy) {
+        if (x0 === x1) break
+        error = error + dy
+        x0 = x0 + sx
+      }
+      if (e2 <= dx) {
+        if (y0 === y1) break
+        error = error + dx
+        y0 = y0 + sy
+      }
+    }
+  }
+
+  function bicubicInterpolator(vals, {translateX, translateY}) {
+    const a00 = vals[1][1],
+        a01 = (-1 / 2) * vals[1][0] + (1 / 2) * vals[1][2],
+        a02 =
+            vals[1][0] +
+            (-5 / 2) * vals[1][1] +
+            2 * vals[1][2] +
+            (-1 / 2) * vals[1][3],
+        a03 =
+            (-1 / 2) * vals[1][0] +
+            (3 / 2) * vals[1][1] +
+            (-3 / 2) * vals[1][2] +
+            (1 / 2) * vals[1][3],
+        a10 = (-1 / 2) * vals[0][1] + (1 / 2) * vals[2][1],
+        a11 =
+            (1 / 4) * vals[0][0] +
+            (-1 / 4) * vals[0][2] +
+            (-1 / 4) * vals[2][0] +
+            (1 / 4) * vals[2][2],
+        a12 =
+            (-1 / 2) * vals[0][0] +
+            (5 / 4) * vals[0][1] +
+            -1 * vals[0][2] +
+            (1 / 4) * vals[0][3] +
+            (1 / 2) * vals[2][0] +
+            (-5 / 4) * vals[2][1] +
+            vals[2][2] +
+            (-1 / 4) * vals[2][3],
+        a13 =
+            (1 / 4) * vals[0][0] +
+            (-3 / 4) * vals[0][1] +
+            (3 / 4) * vals[0][2] +
+            (-1 / 4) * vals[0][3] +
+            (-1 / 4) * vals[2][0] +
+            (3 / 4) * vals[2][1] +
+            (-3 / 4) * vals[2][2] +
+            (1 / 4) * vals[2][3],
+        a20 =
+            vals[0][1] +
+            (-5 / 2) * vals[1][1] +
+            2 * vals[2][1] +
+            (-1 / 2) * vals[3][1],
+        a21 =
+            (-1 / 2) * vals[0][0] +
+            (1 / 2) * vals[0][2] +
+            (5 / 4) * vals[1][0] +
+            (-5 / 4) * vals[1][2] +
+            -1 * vals[2][0] +
+            vals[2][2] +
+            (1 / 4) * vals[3][0] +
+            (-1 / 4) * vals[3][2],
+        a22 =
+            vals[0][0] +
+            (-5 / 2) * vals[0][1] +
+            2 * vals[0][2] +
+            (-1 / 2) * vals[0][3] +
+            (-5 / 2) * vals[1][0] +
+            (25 / 4) * vals[1][1] +
+            -5 * vals[1][2] +
+            (5 / 4) * vals[1][3] +
+            2 * vals[2][0] +
+            -5 * vals[2][1] +
+            4 * vals[2][2] +
+            -1 * vals[2][3] +
+            (-1 / 2) * vals[3][0] +
+            (5 / 4) * vals[3][1] +
+            -1 * vals[3][2] +
+            (1 / 4) * vals[3][3],
+        a23 =
+            (-1 / 2) * vals[0][0] +
+            (3 / 2) * vals[0][1] +
+            (-3 / 2) * vals[0][2] +
+            (1 / 2) * vals[0][3] +
+            (5 / 4) * vals[1][0] +
+            (-15 / 4) * vals[1][1] +
+            (15 / 4) * vals[1][2] +
+            (-5 / 4) * vals[1][3] +
+            -1 * vals[2][0] +
+            3 * vals[2][1] +
+            -3 * vals[2][2] +
+            vals[2][3] +
+            (1 / 4) * vals[3][0] +
+            (-3 / 4) * vals[3][1] +
+            (3 / 4) * vals[3][2] +
+            (-1 / 4) * vals[3][3],
+        a30 =
+            (-1 / 2) * vals[0][1] +
+            (3 / 2) * vals[1][1] +
+            (-3 / 2) * vals[2][1] +
+            (1 / 2) * vals[3][1],
+        a31 =
+            (1 / 4) * vals[0][0] +
+            (-1 / 4) * vals[0][2] +
+            (-3 / 4) * vals[1][0] +
+            (3 / 4) * vals[1][2] +
+            (3 / 4) * vals[2][0] +
+            (-3 / 4) * vals[2][2] +
+            (-1 / 4) * vals[3][0] +
+            (1 / 4) * vals[3][2],
+        a32 =
+            (-1 / 2) * vals[0][0] +
+            (5 / 4) * vals[0][1] +
+            -1 * vals[0][2] +
+            (1 / 4) * vals[0][3] +
+            (3 / 2) * vals[1][0] +
+            (-15 / 4) * vals[1][1] +
+            3 * vals[1][2] +
+            (-3 / 4) * vals[1][3] +
+            (-3 / 2) * vals[2][0] +
+            (15 / 4) * vals[2][1] +
+            -3 * vals[2][2] +
+            (3 / 4) * vals[2][3] +
+            (1 / 2) * vals[3][0] +
+            (-5 / 4) * vals[3][1] +
+            vals[3][2] +
+            (-1 / 4) * vals[3][3],
+        a33 =
+            (1 / 4) * vals[0][0] +
+            (-3 / 4) * vals[0][1] +
+            (3 / 4) * vals[0][2] +
+            (-1 / 4) * vals[0][3] +
+            (-3 / 4) * vals[1][0] +
+            (9 / 4) * vals[1][1] +
+            (-9 / 4) * vals[1][2] +
+            (3 / 4) * vals[1][3] +
+            (3 / 4) * vals[2][0] +
+            (-9 / 4) * vals[2][1] +
+            (9 / 4) * vals[2][2] +
+            (-3 / 4) * vals[2][3] +
+            (-1 / 4) * vals[3][0] +
+            (3 / 4) * vals[3][1] +
+            (-3 / 4) * vals[3][2] +
+            (1 / 4) * vals[3][3]
+
+    return (x, y) => {
+      x = x + translateX ?? 0
+      y = y + translateY ?? 0
+      if (x < 0 || y < 0 || x > 1 || y > 1)
+        throw `oob: (${x}, ${y}) outside of (0, 0) to (1, 1)`
+
+      const x2 = x * x,
+          x3 = x * x2,
+          y2 = y * y,
+          y3 = y * y2
+
+      return (
+          a00 +
+          a01 * y +
+          a02 * y2 +
+          a03 * y3 +
+          (a10 + a11 * y + a12 * y2 + a13 * y3) * x +
+          (a20 + a21 * y + a22 * y2 + a23 * y3) * x2 +
+          (a30 + a31 * y + a32 * y2 + a33 * y3) * x3
+      )
+    }
+  }
+
+  function bicubicGridInterpolator(values) {
+    const m = values.length
+    const n = values[0].length
+    const interpolators = []
+
+    for (let x of _.range(1, m - 2)) interpolators[x] = []
+
+    return (x, y) => {
+      if (x < 1 || y < 1 || x > m - 2 || y > n - 2)
+        throw `oob: (${x}, ${y}) outside of (1,1) to (${
+            m - 2
+        }, ${n - 2})`
+
+      let blX = Math.floor(x)
+      let blY = Math.floor(y)
+
+      if (x === m - 2) blX--
+      if (y === n - 2) blY--
+
+      if (!interpolators[blX][blY]) {
+        interpolators[blX][blY] = bicubicInterpolator(
+            [
+              [
+                values[blX - 1][blY - 1],
+                values[blX - 1][blY],
+                values[blX - 1][blY + 1],
+                values[blX - 1][blY + 2],
+              ],
+              [
+                values[blX + 0][blY - 1],
+                values[blX + 0][blY],
+                values[blX][blY + 1],
+                values[blX][blY + 2],
+              ],
+              [
+                values[blX + 1][blY - 1],
+                values[blX + 1][blY],
+                values[blX + 1][blY + 1],
+                values[blX + 1][blY + 2],
+              ],
+              [
+                values[blX + 2][blY - 1],
+                values[blX + 2][blY],
+                values[blX + 2][blY + 1],
+                values[blX + 2][blY + 2],
+              ],
+            ],
+            {
+              translateX: -blX,
+              translateY: -blY,
+            }
+        )
+      }
+      const interpolator = interpolators[blX][blY]
+      return interpolator(x, y)
+    }
+  }
+
+  // Supersample a bicubic noise grid to get detailed noise at small scales
+  function bicubicNoiseHelper(
+      noiseWidth,
+      noiseHeight,
+      sampleWidth,
+      sampleHeight
+  ) {
+    // generate pointmap
+    let points = _.range(noiseHeight).map((_i) =>
+        _.range(noiseHeight).map((_i) => _.randInt(0, 255) / 255)
+    )
+    const interpolator = bicubicGridInterpolator(points)
+
+    return (x, y) => {
+      // scale sample-space to pointmap scale
+      return interpolator(
+          _.scale(x, 0, sampleWidth, 1, noiseWidth - 2),
+          _.scale(y, 0, sampleHeight, 1, noiseHeight - 2)
+      )
+    }
+  }
+</script>
+<script>
+  class MonsterType extends Enum {
+    static Spider = new MonsterType()
+    static Cyclops = new MonsterType()
+    static Ghost = new MonsterType()
+
+    static {
+      this.make()
+    }
+  }
+
+  class RockKind extends Enum {
+    static Surface = new MonsterType()
+    static Underground = new MonsterType()
+
+    static {
+      this.make()
+    }
+  }
+
+  class Direction extends Enum {
+    static Left = new Direction()
+    static Right = new Direction()
+    // static Up = new Direction()
+    // static Down = new Direction() continue
+
+    static {
+      this.make()
+    }
+  }
+
+  class Signal extends Enum {
+    static GameOver = new Signal()
+    static GameWon = new Signal()
+    static MonsterKilled = new Signal()
+    static EquippedItem = new Signal()
+    static LevelCleared = new Signal()
+
+    static {
+      this.make()
+    }
+  }
+
+  class Sprite {
+    constructor(width, height, asset) {
+      this.width = width
+      this.height = height
+      this.asset = asset
+    }
+  }
+
+  /**
+   * @param handlers.up {function()}
+   * @param handlers.down {function()}
+   * @param handlers.left {function()}
+   * @param handlers.right {function()}
+   * @param handlers.space {function()}
+   * @param handlers.all {function(string)}
+   * @param handlers.other {function(string)}
+   * @param handlers.precondition {function(string): boolean}
+   */
+  function handleInput(handlers) {
+    let listener = (event) => {
+      handlers.all?.call(null, event.key)
+      if (
+          !(handlers.precondition?.call(null, event.key) ?? true)
+      ) {
+        return
+      }
+      if (event.key === 'w') {
+        handlers.up()
+      } else if (event.key === 'a') {
+        handlers.left()
+      } else if (event.key === 's') {
+        handlers.down()
+      } else if (event.key === 'd') {
+        handlers.right()
+      } else if (event.key === ' ') {
+        event.preventDefault()
+        handlers?.space()
+      } else {
+        handlers.other?.call(null, event.key)
+      }
+    }
+    document.body.addEventListener('keydown', listener)
+    return () =>
+        document.body.removeEventListener('keydown', listener)
+  }
+
+  /**
+   * @extends CanvasRenderingContext2D
+   */
+  class My2dContext {
+    constructor(ctx, width, height) {
+      this.realctx = ctx
+      this.width = width
+      this.height = height
+      return new Proxy(this, {
+        get(target, prop, receiver) {
+          if (prop in target) {
+            return Reflect.get(...arguments)
+          }
+          const value = ctx[prop]
+          if (value instanceof Function) {
+            return function (...args) {
+              return value.apply(
+                  this === receiver ? ctx : this,
+                  args
+              )
+            }
+          }
+          return Reflect.get(ctx, prop)
+        },
+        set(target, prop, val, receiver) {
+          if (prop in target) {
+            return Reflect.set(...arguments)
+          }
+          return Reflect.set(ctx, prop, val)
+        },
+      })
+    }
+
+    clear() {
+      this.realctx.clearRect(0, 0, this.width, this.height)
+    }
+
+    drawWith(fn) {
+      this.realctx.save()
+      fn()
+      this.realctx.restore()
+    }
+
+    /**
+     *
+     * @param sprite {Sprite}
+     * @param x {number}
+     * @param y {number}
+     */
+    drawImage(sprite, x, y) {
+      this.realctx.drawImage(
+          sprite.asset,
+          x,
+          y,
+          sprite.width,
+          sprite.height
+      )
+    }
+  }
+
+  class RandomPool {
+    used = new Map()
+
+    randInt(lower, upper) {
+      let i = 0
+      do {
+        let r = _.randInt(lower, upper)
+        if (!this.used.has(r)) {
+          this.used.set(r, null)
+          return r
+        }
+        console.warn(
+            'Random pool iteration failed: ',
+            r,
+            ' failed',
+            i,
+            this.used,
+            lower,
+            upper
+        )
+        i += 1
+      } while (i < upper * 10)
+      throw 'Failed to find a new random number'
+    }
+
+    add(x, y) {
+      this.used.set(`${x}:${y}`, null)
+    }
+
+    random2d([lower, upper], [lower2, upper2]) {
+      let i = 0
+      do {
+        let x = _.randInt(lower, upper)
+        let y = _.randInt(lower2, upper2)
+        if (!this.used.has(`${x}:${y}`)) {
+          this.used.set(`${x}:${y}`, null)
+          return {x, y}
+        }
+        console.debug(
+            x,
+            y,
+            ' failed',
+            i,
+            this.used,
+            lower,
+            upper
+        )
+        i += 1
+      } while (i < upper * 10)
+      throw 'Failed to find a new random number'
+    }
+  }
+
+  /**
+   * @param Base
+   * @returns {{new(): SignalHandler, prototype: SignalHandler}}
+   */
+  const signalHandler = (Base) =>
+      class SignalHandler extends Base {
+        handlers = {}
+
+        /**
+         * @param signal {any}
+         * @param cb {(string, any)}
+         */
+        on(signal, cb) {
+          this.handlers[signal] ??= []
+          this.handlers[signal].push(cb)
+          return () => this.removeHandler(signal, cb)
+        }
+
+        removeHandler(signal, cb) {
+          ;(this.handlers[signal] ?? []).removeElement(cb)
+        }
+
+        emit(signal, data) {
+          for (let handler of this.handlers[signal]) {
+            handler(signal, data)
+          }
+        }
+      }
+
+  class ReproducibleRandom {
+    #history = []
+    #i = 0
+
+    randInt(lower, upper) {
+      if (this.#history[this.#i] !== undefined)
+        return this.#history[this.#i++]
+      let r = _.randInt(lower, upper)
+      this.#history[this.#i++] = r
+      return r
+    }
+
+    ndRand(lower, upper, skew) {
+      if (this.#history[this.#i] !== undefined)
+        return this.#history[this.#i++]
+      let r = _.ndRandom(lower, upper, skew)
+      this.#history[this.#i++] = r
+      return r
+    }
+
+    reset() {
+      this.#i = 0
+    }
+  }
+
+  class AssetManager {
+    static #assetSources = {
+      player: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAB5QTFRFAAAAqrfMvWxKJitEi5u00XbQ98KCwMvcm0yjPyYxhW+MwQAAAAF0Uk5TAEDm2GYAAABoSURBVAjXTc2xCYBADAXQa28ewREOF7CwViKWVjkX0KQTQcnf1gQbUz1+Qn5KGThTDPApQwQImH3KcKgvs/U+6rgVsCGSQjRFgtKMbdzgmXlB/NsLdZ6AhLkSfpCLeZOAHas6vJSrV7xSOjc2m/JhPQAAAABJRU5ErkJggg==',
+      playerDark:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAB5QTFRFAAAAqrfM6EU3i5u0djs298KC6qVswMvcvWxKPyYxmozc2AAAAAF0Uk5TAEDm2GYAAABkSURBVAjXTc2xEYAwCAXQtGyiG+gIDpAVvLO0Ik4gdClyyt9WSBp/9Q4OfkoE1BQBhggiQMDaEMFE1Jdku0cdjwJ2xCSgHTOmQNOXbYt/umLxK2RhLhk/iDFf0nGf6vBSLl7xAcJoOIwl8JTnAAAAAElFTkSuQmCC',
+      wand1: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABJQTFRFAAAAdjs26qVsdeP/vWxKPyYx+PmuDwAAAAF0Uk5TAEDm2GYAAABFSURBVAjXY2BgYAgNZQAD1tDQAAgj2BTCCA02hciFOpugM1ScoIxAUQiDNcQVygh1gUqFwBgurjAG1IrQENcAVEshzgAAkoEQmy8toB4AAAAASUVORK5CYII=',
+      door: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABVQTFRFwMvcdjs2vWxKUmB8i5u0PyYxJitEzIEdiAAAAGBJREFUCNctyssNgCAQRdHZWIBGGjBhGgBtgIG9JEwDktd/CfK7q7O45DBylCYqoUrwkkAIpRTxDbFBpeO9DDq2vLMS6LvzbuGeAdYGxHza8TSwztlYrJnXfABzZqwZHT/BAyUThOtOBAAAAABJRU5ErkJggg==',
+      debugTree:
+          'data:image/png;base64,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',
+      debugRocks:
+          'data:iamge/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAlQTFRFvWxKPyYxdjs2DTnPkgAAAEJJREFUCNdjWAUEDKtWhUYxrFoZGgYkEqYBCQcxhlWRQGJZJJgLlFgaBlQyNRSoeArrtCwQAWIBuWCxpWFgU1atAgAC9SBkoYLPuAAAAABJRU5ErkJggg==',
+      debugOverlay:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABGdBTUEAALGPC/xhBQAAAAZQTFRFAAAA////pdmf3QAAAAF0Uk5TAEDm2GYAAAAkSURBVAjXY2BgYLCxYaixY0hggyIgYGwAISCACwIVAJUxMAAAi+0Fy2DWcZIAAAAASUVORK5CYII=',
+      potion: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABhQTFRFAAAAi5u0wMvcvWxK6qVs/3Bt6EU3PyYxs4T0bwAAAAF0Uk5TAEDm2GYAAAA8SURBVAjXY2DAAtjLywvAjHIggDBMnNEZheJQRpF6OURTaChYG3tZaGg6hJGWhsYoT0uDGA03GW4XBAAAu/MWyHy8dtcAAAAASUVORK5CYII=',
+      monsters: {
+        [MonsterType.Cyclops]:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABhQTFRFAAAAJitEdjs2////4ZplvWxK98KCPyYxLIt81AAAAAF0Uk5TAEDm2GYAAABhSURBVAjXJcuxDYAwEAPA7xggG1DAIigLoCc9kE8bISVen3fi6mTZIgKPeBaiOtDMEiucZnnAPBPHESeeMJv4hBd8d46roKvqVeCTDPAGi6u9A/3eCqGf6q5sWmqJDQjgByPAK1mAzG9+AAAAAElFTkSuQmCC',
+        [MonsterType.Ghost]:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAAi5u0wMvcPyYxKaGK/AAAAAF0Uk5TAEDm2GYAAABPSURBVAjXY2AAg///GRiY//8/wMB/a/kHBv6slUBi1SogsX4flLBfteoPw//Vv/4z/F796z3Dr+yd6xl+Za0EEq9Wr2f49zV8P4P9q/V/AJcrKOLbimK6AAAAAElFTkSuQmCC',
+        [MonsterType.Spider]:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABtQTFRFAAAA////6qVsUmB8djs2i5u0wMvcvWxKPyYxDvufLAAAAAF0Uk5TAEDm2GYAAABrSURBVAjXLYyxDYAwDARdegNGYATYgEyAWIDILQHJlJGA8GPzAVyd7+0XhQIZWfCPYII7LkLsUrtGgp2pDYWA0z3Um7FzX+caHdvQ18imYbteMPfyQbO8ALv3wi9lNYuzCLgaRKg4FFRZKR4R4TZTX/aSZAAAAABJRU5ErkJggg==',
+      },
+      ground: [
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAB1JREFUOI1jbDmW+Z+BAsBEieZRA0YNGDVgMBkAADGOAtL5/cdYAAAAAElFTkSuQmCC',
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAlQTFRFi9h9ZaVWhMZpfk5vCQAAADJJREFUCNdjWAUEDAuaYMTSaUBiVRaIAEmsWpYFJFbCuUjEgiaGmSBi2aql00BiWWAJAFxUKK1jXEsRAAAAAElFTkSuQmCC',
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRF////44YoZaVW/b5ThMZpiQPwCAAAAEpJREFUCNdNjdEJQCEMAwNvBFfoAApOELP/TKY+UfPTg4QrtAON7hMBlWagMOrXV3WApcUzTmBsOJ6M6x/sWpCKC6Qf2AXFO7ZrAoI2Hifwpi13AAAAAElFTkSuQmCC',
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAlQTFRFZaVWwMvchMZpm2LDeQAAAEhJREFUCNdjWAUEDKtmgYiVkUCCM2IVwzLOyCyGVSs4kxiWpkatAhKRURBigSqQmJm1gothZYLqLIZVC1SBOhIUgITWMiABBAAKFR+x5SMovgAAAABJRU5ErkJggg==',
+      ],
+      underground: [
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAB1JREFUOI1jLLM2+89AAWCiRPOoAaMGjBowmAwAAPZPAgZ7bKDkAAAAAElFTkSuQmCC',
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAlQTFRFvWxKPyYxdjs2DTnPkgAAAEJJREFUCNdjWAUEDKtWhUYxrFoZGgYkEqYBCQcxhlWRQGJZJJgLlFgaBlQyNRSoeArrtCwQAWIBuWCxpWFgU1atAgAC9SBkoYLPuAAAAABJRU5ErkJggg==',
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFvWxKi5u0PyYxwMvcdjs2/Pre9wAAAEtJREFUCNdVi8ENACAIA3m4gU5A2KBMIOw/k1V5aD+9NFfJitzqQ7IpAc5F7xKscLXjhINyeE4reO4bOga7SQJU9/ICb+UcULXvvgBCWR1LPpZFPwAAAABJRU5ErkJggg==',
+      ],
+    }
+    /** @type any */
+    static assets = {}
+
+    static #load(assets) {
+      if (typeof assets == 'string') {
+        return AssetManager.#loadImageUrl(assets)
+      } else if (assets instanceof Array) {
+        return Promise.all(assets.map(AssetManager.#load))
+      } else if (assets instanceof Object) {
+        return Object.asyncMap(assets, async ([k, v]) => [
+          k,
+          await AssetManager.#load(v),
+        ])
+      }
+    }
+
+    static async loadAll() {
+      this.assets = await this.#load(this.#assetSources)
+      return this.assets
+    }
+
+    /**
+     *
+     * @param url {*}
+     * @returns {Promise<HTMLImageElement>}
+     */
+    static #loadImageUrl(url) {
+      let w = 64
+      let h = 64
+      if (url === AssetManager.#assetSources.wand1) {
+        w = 16
+        h = 16
+      }
+      let image = new Image()
+      let promise = new Promise((resolve, reject) => {
+        image.onload = () => resolve(new Sprite(w, h, image))
+        image.onerror = reject
+      })
+      image.src = url
+      return promise
+    }
+  }
+
+  class Drawable {
+    /** @type Sprite */
+    sprite = undefined
+    x = 0
+    y = 0
+    /** @type {CanvasRenderingContext2D & My2dContext} */
+    ctx = undefined
+    shouldCull = false
+
+    get cx() {
+      return this.x * 64
+    }
+
+    get cy() {
+      return this.y * 64
+    }
+
+    constructor({x, y, sprite, ctx}) {
+      if (!ctx) {
+        throw 'ctx must be provided'
+      }
+      this.x = x
+      this.y = y
+      this.sprite = sprite
+      this.ctx = ctx
+    }
+
+    draw() {
+      this.ctx.drawImage(this.sprite, this.cx, this.cy)
+    }
+
+    drawMirrored() {
+      this.ctx.drawWith((_) => {
+        this.ctx.scale(-1, 1)
+        this.ctx.drawImage(
+            this.sprite,
+            -this.cx - this.sprite.width,
+            this.cy
+        )
+      })
+    }
+  }
+
+  class Entity extends Drawable {
+    health = undefined
+    maxHealth = undefined
+    attack = 0
+    defense = 0
+    facing = Direction.Right
+    /** @type World */
+    world = undefined
+    /** @type {?Path} */
+    path = null
+    waypoint = null
+    lastDamageKind = null
+
+    constructor({
+                  x,
+                  y,
+                  sprite,
+                  health,
+                  maxHealth,
+                  attack,
+                  defense,
+                  ctx,
+                  world,
+                }) {
+      super({x, y, sprite, ctx})
+      this.x = x
+      this.y = y
+      this.health = health
+      this.maxHealth = maxHealth
+      this.attack = attack
+      this.defense = defense
+      this.world = world
+    }
+
+    move(dx, dy) {
+      let nx = _.clamp(0, this.world.width - 1, this.x + dx)
+      let ny = _.clamp(0, this.world.height - 1, this.y + dy)
+
+      let entity = this.world.get(nx, ny)
+      this.face(dx, dy)
+      if (entity) {
+        if (!this.collidedWith(entity)) return
+      }
+      this.x = nx
+      this.y = ny
+    }
+
+    moveTo(x, y) {
+      if (Math.abs(this.x - x) > 5) {
+        throw 'Who'
+      }
+      let nx = _.clamp(0, this.world.width - 1, x)
+      let ny = _.clamp(0, this.world.height - 1, y)
+
+      this.face(x - this.x, y)
+
+      let entity = this.world.get(nx, ny)
+      if (entity) {
+        if (!this.collidedWith(entity)) return
+      }
+
+      this.x = nx
+      this.y = ny
+    }
+
+    collidedWith(other) {
+      return false
+    }
+
+    face(dx, _dy) {
+      if (dx < 0) {
+        this.facing = Direction.Left
+      } else if (dx > 0) {
+        this.facing = Direction.Right
+      }
+    }
+
+    drawHealth() {
+      if (this.maxHealth === undefined) return
+      let ratio = this.health / this.maxHealth
+      this.ctx.drawWith(() => {
+        const HEALTH_BAR_SIZE = 6
+        this.ctx.fillStyle = 'black'
+        this.ctx.fillRect(
+            this.cx,
+            this.cy + this.sprite.width - HEALTH_BAR_SIZE,
+            this.sprite.width,
+            HEALTH_BAR_SIZE
+        )
+        this.ctx.fillStyle = 'red'
+        this.ctx.fillRect(
+            this.cx,
+            this.cy + this.sprite.width - HEALTH_BAR_SIZE,
+            this.sprite.width * ratio,
+            HEALTH_BAR_SIZE
+        )
+      })
+    }
+
+    draw() {
+      if (this.facing === Direction.Left) {
+        this.drawMirrored()
+      } else {
+        super.draw()
+      }
+      this.drawHealth()
+    }
+
+    calcDamage(other) {
+      return (
+          Math.max(this.attack - other.defense, 1) *
+          _.randInt(1, 6)
+      )
+    }
+
+    die() {
+      this.shouldCull = true
+      console.info(this, 'entity died')
+    }
+
+    damage(damage, kind) {
+      this.lastDamageKind = kind
+      this.health = _.clamp(
+          0,
+          this.maxHealth,
+          this.health - damage
+      )
+      if (this.health === 0) {
+        this.die()
+      }
+    }
+
+    setWaypoint(x, y) {
+      this.waypoint = [x, y]
+      try {
+        this.path = astarSimple(
+            [this.x, this.y],
+            this.waypoint,
+            this.world
+        )
+      } catch (e) {
+        console.warn('Pathing failed', e)
+        this.path = null
+        this.waypoint = null
+      }
+    }
+
+    // Recompute path incase the world has changed
+    repath() {
+      if (!this.waypoint) return
+      if (!this.path) return
+      try {
+        this.path = astarSimple(
+            [this.x, this.y],
+            this.waypoint,
+            this.world
+        )
+      } catch (e) {
+        console.warn('Repathing failed', e)
+        this.path = null
+        this.waypoint = null
+      }
+      this.path?.next()
+    }
+
+    // Moves forward on the path one step, returns true if the entity moved
+    advancePath() {
+      if (this.path?.length > 0) {
+        let [x, y] = this.path?.next()
+        this.moveTo(x, y)
+        return true
+      } else {
+        return false
+      }
+    }
+  }
+
+  class PowerupEntity extends Entity {
+    item = undefined
+
+    constructor({x, y, ctx, sprite, item}) {
+      super({x, y, ctx, sprite})
+      this.item = item
+    }
+  }
+
+  class PowerupItem {
+    /** @type {CanvasRenderingContext2D & My2dContext} */
+    ctx
+    parent
+    world
+
+    constructor({ctx, parent, world}) {
+      this.ctx = ctx
+      this.parent = parent
+      this.world = world
+    }
+
+    draw() {
+    }
+
+    use() {
+    }
+  }
+
+  class HealthPotion extends PowerupEntity {
+    constructor({x, y, ctx, world}) {
+      super({
+        x,
+        y,
+        ctx,
+        sprite: AssetManager.assets.potion,
+        item: new HealthPotionItem({
+          ctx,
+          world,
+          parent: world.player,
+        }),
+      })
+    }
+  }
+
+  class HealthPotionItem extends PowerupItem {
+    sprite = AssetManager.assets.potion
+
+    constructor({ctx, world, parent}) {
+      super({ctx, world, parent})
+    }
+
+    draw() {
+      this.ctx.realctx.drawImage(
+          this.sprite.asset,
+          this.parent.cx - 4,
+          this.parent.cy + 16,
+          32,
+          32
+      )
+    }
+
+    use() {
+      this.parent.health = this.parent.maxHealth
+      this.world.redraw()
+    }
+  }
+
+  class WandPowerup extends PowerupEntity {
+    constructor({x, y, ctx, world}) {
+      super({
+        x,
+        y,
+        ctx,
+        world,
+        sprite: AssetManager.assets.wand1,
+        item: new WandItem({
+          ctx,
+          world,
+          parent: world.player,
+        }),
+      })
+    }
+
+    draw() {
+      this.ctx.realctx.drawImage(
+          this.sprite.asset,
+          this.cx + this.sprite.width / 2,
+          this.cy + this.sprite.height / 2,
+          64 * 0.75,
+          64 * 0.75
+      )
+    }
+  }
+
+  class WandItem extends PowerupItem {
+    sprite = AssetManager.assets.wand1
+
+    constructor({ctx, world, parent}) {
+      super({ctx, world, parent})
+    }
+
+    draw() {
+      this.ctx.realctx.drawImage(
+          this.sprite.asset,
+          this.parent.cx - 4,
+          this.parent.cy + 16,
+          32,
+          32
+      )
+    }
+
+    use() {
+      let directionFix =
+          this.parent.facing === Direction.Right ? 1 : -1
+      const sections = 10
+      const distance = 5
+      let strike = () => {
+        this.ctx.drawWith(() => {
+          this.ctx.beginPath()
+          let originX =
+              this.parent.cx +
+              (this.parent.facing === Direction.Right
+                  ? this.parent.sprite.width
+                  : 0)
+          let originY =
+              this.parent.cy + this.parent.sprite.height / 2
+          this.ctx.moveTo(originX, originY)
+          for (let i of _.range(0, sections)) {
+            this.ctx.lineTo(
+                originX +
+                64 *
+                distance *
+                (i / sections) *
+                directionFix,
+                originY + _.ndRandom(-20, 20, 1)
+            )
+          }
+          this.ctx.lineWidth = 10
+          this.ctx.strokeStyle = 'white'
+          this.ctx.shadowBlur = 6
+          this.ctx.shadowColor = 'black'
+          this.ctx.stroke()
+        })
+      }
+      _.range(10).forEach((i) => setTimeout(strike, i * 10))
+      let hit = (x, y) => {
+        if (y !== this.parent.y) return false
+        if (this.parent.facing === Direction.Right) {
+          return (
+              x > this.parent.x &&
+              x < this.parent.x + distance
+          )
+        } else {
+          return (
+              x > this.parent.x - distance &&
+              x < this.parent.x
+          )
+        }
+      }
+      this.world.monsters
+          .filter((m) => hit(m.x, m.y))
+          .forEach((m) => m.damage(100))
+      this.world.redraw()
+    }
+  }
+
+  class Rocks extends Drawable {
+    kind
+
+    constructor({x, y, ctx, kind}) {
+      super({x, y, ctx})
+      this.rr = new ReproducibleRandom()
+      this.kind = kind ?? RockKind.Surface
+    }
+
+    drawRock(ox, oy) {
+      this.ctx.drawWith(() => {
+        /** @type {CanvasRenderingContext2D} */
+        let c = this.ctx
+        c.beginPath()
+        let currX = this.cx + ox
+        let currY = this.cy + oy
+
+        let numPoints = this.rr.randInt(10, 10)
+        let xVals = _.range(numPoints).map(
+            (i) => (360 / numPoints) * i
+        )
+        let yVals = _.range(numPoints).map((_i) =>
+            this.rr.ndRand(0, 1, 0.5)
+        )
+
+        let xCoords = xVals.map((c) => Math.cos(_.deg2rad(c)))
+        let yCoordsRaw = xVals.map((c) =>
+            Math.sin(_.deg2rad(c))
+        )
+        let yCoords = _.zip(yCoordsRaw, yVals).map(
+            ([x, y]) => x * y
+        )
+        let scale = this.rr.randInt(25, 40)
+        for (let [x, y] of _.zip(xCoords, yCoords)) {
+          c.lineTo(currX + x * scale, currY + y * scale)
+        }
+
+        if (this.kind === RockKind.Surface) {
+          let h = 27
+          let s = this.rr.randInt(20, 40)
+          let l = this.rr.randInt(20, 50)
+          c.fillStyle = `hsl(${h}, ${s}%, ${l}%)`
+        } else {
+          let h = 205
+          let s = this.rr.randInt(30, 45)
+          let l = this.rr.randInt(20, 30)
+          c.fillStyle = `hsl(${h}, ${s}%, ${l}%)`
+        }
+        c.fill()
+      })
+    }
+
+    draw() {
+      this.rr.reset()
+
+      _.range(this.rr.randInt(2, 6)).forEach(() => {
+        this.drawRock(
+            this.rr.ndRand(12, 64 - 14, 1),
+            this.rr.ndRand(12, 64 - 14, 1.25)
+        )
+      })
+    }
+  }
+
+  class Tree extends Drawable {
+    constructor({x, y, ctx}) {
+      super({x, y, ctx})
+      this.species = _.randInt(0, 1)
+    }
+
+    drawTriangle(ox, oy, width, height, color) {
+      this.ctx.drawWith(() => {
+        // oh webgl...
+        oy = oy + 64
+        /** @type {CanvasRenderingContext2D} */
+        let c = this.ctx
+        c.beginPath()
+        // Origin -> lower right corner
+        c.moveTo(this.cx + ox, this.cy + oy)
+        c.lineTo(this.cx + ox + width, this.cy + oy)
+        //  lower right corner -> Top corner
+        c.lineTo(
+            this.cx + ox + width / 2,
+            this.cy + oy - height
+        )
+        // Top corner -> origin
+        c.lineTo(this.cx + ox, this.cy + oy)
+        c.fillStyle = color
+        c.fill()
+      })
+    }
+
+    draw() {
+      const smallTreeColor = 'hsl(120,100%,25%)'
+      const bigTreeColor = 'hsl(120,52%,25%)'
+      if (this.species === 1) {
+        this.drawTriangle(10, -5, 30, 64, bigTreeColor)
+        this.drawTriangle(0, -1, 22, 34, smallTreeColor)
+        this.drawTriangle(30, 0, 22, 34, smallTreeColor)
+      } else {
+        this.drawTriangle(0, -8, 22, 34, smallTreeColor)
+        this.drawTriangle(10, -5, 30, 64, bigTreeColor)
+        this.drawTriangle(30, 0, 22, 34, smallTreeColor)
+      }
+    }
+  }
+
+  class Door extends Drawable {
+    constructor({x, y, ctx}) {
+      super({x, y, ctx, sprite: AssetManager.assets.door})
+    }
+  }
+
+  class Ground extends Drawable {
+    constructor({x, y, ctx, underground}) {
+      let tileProbs = [0, 0, 0, 0, 1, 2]
+      super({
+        x,
+        y,
+        ctx,
+        sprite: underground
+            ? AssetManager.assets.underground[
+                tileProbs[_.randInt(0, tileProbs.length - 1)]
+                ]
+            : AssetManager.assets.ground[_.randInt(0, 3)],
+      })
+    }
+  }
+
+  // TODO: Random Move timeout on all entities
+  class Player extends Entity {
+    /** @type {PowerupItem} */
+    equipped = null
+
+    constructor({x = 0, y = 0, ctx, world}) {
+      super({
+        x,
+        y,
+        sprite: AssetManager.assets.player,
+        maxHealth: 64,
+        health: 64,
+        ctx,
+        world,
+        defense: 5,
+        attack: 4,
+      })
+    }
+
+    die() {
+      super.die()
+      this.world.emit(Signal.GameOver)
+    }
+
+    draw() {
+      super.draw()
+      if (this.equipped) {
+        this.equipped.draw(this.cx, this.cy)
+      }
+    }
+
+    collidedWith(other) {
+      if (other instanceof Monster) {
+        other.damage(this.calcDamage(other))
+      }
+      if (other instanceof PowerupEntity) {
+        this.world.emit(Signal.EquippedItem, other.item)
+        this.equipped = other.item
+        other.die()
+      }
+      if (other instanceof Door) {
+        if (this.world.goingToDoor) {
+          this.world.emit(
+              Signal.LevelCleared,
+              this.world.level
+          )
+        }
+      }
+    }
+  }
+
+  // TODO: Monster AI State Machine
+  class Monster extends Entity {
+    kind
+
+    constructor({kind, x = 0, y = 0, ctx, world}) {
+      let sprite = AssetManager.assets.monsters[kind]
+      let maxHealth
+      let attack
+      let defense
+      if (kind === MonsterType.Spider) {
+        maxHealth = 64
+        attack = 3
+        defense = 2
+      } else if (kind === MonsterType.Cyclops) {
+        maxHealth = 100
+        attack = 5
+        defense = 10
+      } else if (kind === MonsterType.Ghost) {
+        maxHealth = 20
+        attack = 1
+        defense = 1
+      }
+      super({
+        sprite,
+        x,
+        y,
+        attack,
+        defense,
+        ctx,
+        world,
+        health: maxHealth,
+        maxHealth,
+      })
+      this.world = world
+      this.kind = kind
+    }
+
+    collidedWith(other) {
+      if (other instanceof Player) {
+        other.damage(this.calcDamage(other), this)
+      }
+    }
+
+    die() {
+      super.die()
+      this.world.emit(Signal.MonsterKilled, this)
+    }
+
+    move(dx, dy) {
+      return super.move(dx, dy)
+    }
+
+    moveTo(x, y) {
+      return super.moveTo(x, y)
+    }
+
+    draw() {
+      if (this.world.debug.mobPath) {
+        this.path?.drawRemaining(this.ctx)
+      }
+      super.draw()
+    }
+
+    // Moves to the next cell as determined by the AI
+    doAi() {
+      class State extends Enum {
+        static Wandering = new State()
+        static Tracking = new State()
+        static {
+          this.make()
+        }
+      }
+
+      if (this['noai']) return
+
+      // Find the player, and if they are close, close in
+      let pathToPlayer
+      try {
+        pathToPlayer = astarSimple(
+            [this.x, this.y],
+            [this.world.player.x, this.world.player.y],
+            this.world
+        )
+      } catch {
+        pathToPlayer = null
+      }
+      if ((pathToPlayer?.length ?? Infinity) < 5) {
+        this.path = pathToPlayer
+        this.path.next()
+        this.waypoint = [
+          this.world.player.x,
+          this.world.player.y,
+        ]
+        if (this.advancePath()) return
+      } else {
+        // Keep following our path, if we have one
+        if (this.advancePath()) return
+        // Otherwise pick a random place to go to
+        if (_.randInt(0, 5) === 0) {
+          this.setWaypoint(
+              _.randInt(0, this.world.width - 1),
+              _.randInt(0, this.world.height - 1)
+          )
+        } else {
+          // or just wander
+          this.move(_.randInt(-1, 1), _.randInt(-1, 1))
+        }
+      }
+    }
+
+    chooseNewWaypoint() {
+      if (_.randInt(0, 1) === 0) {
+        this.setWaypoint(
+            this.world.player.x - 1,
+            this.world.player.y
+        )
+      } else {
+        this.setWaypoint(
+            _.randInt(0, this.world.width - 1),
+            _.randInt(0, this.world.height - 1)
+        )
+      }
+    }
+  }
+
+  /**
+   * @extends SignalHandler
+   */
+  class World extends signalHandler(class {
+  }) {
+    /** @type {CanvasRenderingContext2D & My2dContext} */
+    ctx
+    tick = 0
+    // in cells
+    width
+    // in cells
+    height
+    randomPool = new RandomPool()
+    fow = false
+    level
+    debug = {
+      mobPath: false,
+      drawGrid: false,
+      gridClick: null,
+      selectedEntity: null,
+      idleMoveMobs: true,
+      idleWaypointUpdate: true,
+    }
+    alive = true
+    goingToDoor = false
+    cleared = false
+    ground = []
+    trees = []
+    rocks = []
+    monsters = []
+    powerups = []
+
+    get running() {
+      return this.alive
+    }
+
+    constructor(w, h, ctx, level) {
+      super()
+      this.width = w
+      this.height = h
+      this.ctx = ctx
+      this.level = level ?? 0
+      let world = this
+
+      this.player = new Player({
+        health: 64,
+        maxHealth: 64,
+        ctx,
+        world,
+        x: this.width - 2,
+      })
+      this.randomPool.add(this.player.x, this.player.y)
+
+      this.ground = this.generateGround()
+      this.trees = this.generateTrees()
+
+      this.rocks = this.generateRocks()
+      this.door = new Door({
+        ctx,
+        ...this.randomPool.random2d(
+            [0, this.width - 1],
+            [0, this.height - 1]
+        ),
+      })
+      this.monsters = [
+        new Monster({
+          kind: MonsterType.Ghost,
+          ctx,
+          world,
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+        }),
+        new Monster({
+          kind: MonsterType.Cyclops,
+          ctx,
+          world,
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+        }),
+        new Monster({
+          kind: MonsterType.Spider,
+          ctx,
+          world,
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+        }),
+      ]
+
+      /** @type {PowerupEntity[]} */
+      this.powerups = [
+        new HealthPotion({
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+          ctx,
+          world,
+        }),
+        new HealthPotion({
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+          ctx,
+          world,
+        }),
+        new WandPowerup({
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+          ctx,
+          world,
+        }),
+        new WandPowerup({
+          ...this.randomPool.random2d(
+              [0, this.width - 1],
+              [0, this.height - 1]
+          ),
+          ctx,
+          world,
+        }),
+      ]
+
+      this.openCriticalRoutes()
+
+      this.on(Signal.GameOver, () => {
+        this.alive = false
+        // Make sure death screen is drawn
+        this.redraw()
+      })
+
+      this.on(Signal.MonsterKilled, () => {
+        this.cull()
+        if (this.monsters.length === 0) {
+          this.emit(Signal.GameWon)
+        }
+      })
+
+      this.on(Signal.GameWon, () => {
+        this.cleared = true
+      })
+
+      this.on(Signal.EquippedItem, (_signal, item) => {
+        $('#inventory-slot').src = item.sprite.asset.src
+      })
+    }
+
+    // Picks a random point, then paths from the player to the point, and then the point to another POI going through entities
+    // If the only path is through an entity, remove it
+    openCriticalRoutes() {
+      let {player, door, width, height} = this
+
+      // Neighbors, but don't remove occupied cells
+      function neighbors(pos) {
+        return [
+          [pos[0] - 1, pos[1]],
+          [pos[0] + 1, pos[1]],
+          [pos[0], pos[1] - 1],
+          [pos[0], pos[1] + 1],
+        ].filter(
+            (a) =>
+                a[0] >= 0 &&
+                a[1] >= 0 &&
+                a[0] < width &&
+                a[1] < height
+        )
+      }
+
+      // We really don't want to go through entities, but we will if we have to
+      let cost = (current, neighbor) => {
+        let e = this.get(...neighbor)
+        if (e && !(e instanceof Player)) {
+          return 1000
+        }
+        return 1
+      }
+
+      let randomCoords = [
+        _.randInt(0, width),
+        _.randInt(0, height),
+      ]
+      let doorCoords = [door.x, door.y]
+      let playerCoords = [player.x, player.y]
+      try {
+        let playerToRandom = astar(
+            playerCoords,
+            randomCoords,
+            manhattan,
+            cost,
+            neighbors,
+            this,
+            5000
+        )
+        let doorToRandom = astar(
+            doorCoords,
+            randomCoords,
+            manhattan,
+            cost,
+            neighbors,
+            this,
+            5000
+        )
+        playerToRandom.drawRemaining(this.ctx)
+        doorToRandom.drawRemaining(this.ctx)
+        for (let cell of playerToRandom.totalPath) {
+          let e = this.get(...cell)
+          if (
+              e &&
+              (e instanceof Tree || e instanceof Rocks)
+          ) {
+            this.trees.removeElement(e)
+            this.rocks.removeElement(e)
+          }
+        }
+        for (let cell of doorToRandom.totalPath) {
+          let e = this.get(...cell)
+          if (
+              e &&
+              (e instanceof Tree || e instanceof Rocks)
+          ) {
+            this.trees.removeElement(e)
+            this.rocks.removeElement(e)
+          }
+        }
+      } catch (e) {
+        console.warn(e)
+      }
+    }
+
+    // Create nice ground patterns
+    generateGround() {
+      let {ctx, level} = this
+      let theGround
+
+      // Completely random
+      theGround = _.map2d(
+          this.width,
+          this.height,
+          (x, y) =>
+              new Ground({x, y, ctx, underground: level === 1})
+      )
+      // Too much noise in lower levels, don't generate any structure
+      if (level === 1) return theGround
+      // Make entire ground a 85%:15% split of plain:grass
+      theGround.forEach(
+          (g) =>
+              (g.sprite =
+                  Math.random() > 0.85
+                      ? AssetManager.assets.ground[1]
+                      : AssetManager.assets.ground[0])
+      )
+
+      // Generate stone cells
+      {
+        let noise = bicubicNoiseHelper(
+            10,
+            10,
+            this.width,
+            this.height
+        )
+        theGround.map((g) => {
+          if (Math.pow(noise(g.x, g.y), 4) > 0.3) {
+            g.sprite = AssetManager.assets.ground[3]
+          }
+        })
+      }
+
+      // Generate flowers and grass around the flower patches
+      {
+        let noise = bicubicNoiseHelper(
+            10,
+            10,
+            this.width,
+            this.height
+        )
+        theGround.map((g) => {
+          let {x, y} = g
+          let v = noise(x, y)
+          v = Math.pow(v, 4)
+
+          if (v > 0.4) {
+            g.sprite = AssetManager.assets.ground[2]
+          } else if (v > 0.3) {
+            g.sprite = AssetManager.assets.ground[1]
+          }
+        })
+      }
+
+      // Generate some patches of flowers
+      for (let _i in _.range(_.randInt(3, 5))) {
+        let [x, y] = [
+          _.randInt(0, this.width - 1),
+          _.randInt(0, this.height - 1),
+        ]
+        // Diamond shape
+        let offsets = [
+          [
+            ..._.range(-1, 1 + 1)
+                .map((i) =>
+                    _.range(-1, 1 + 1).map((j) => [i, j])
+                )
+                .flat(),
+            [2, 0],
+            [0, 2],
+            [-2, 0],
+            [0, -2],
+          ],
+        ]
+
+        for (let [offX, offY] of offsets[0]) {
+          let g = theGround.find(
+              (g) => g.x === x + offX && g.y === y + offY
+          )
+          // Only generate some cells in the diamond
+          if (g && Math.random() > 0.8) {
+            g.sprite = AssetManager.assets.ground[2]
+          }
+        }
+      }
+      return theGround
+    }
+
+    generateTrees() {
+      if (this.level === 0) {
+        let trees = _.range(_.randInt(15, 24)).map(
+            () =>
+                new Tree({
+                  ctx: this.ctx,
+                  ...this.randomPool.random2d(
+                      [0, this.width - 1],
+                      [0, this.height - 1]
+                  ),
+                })
+        )
+        {
+          for (let i of _.range(5)) {
+
+            let noise = bicubicNoiseHelper(
+                10 * 1,
+                10 * 1,
+                this.width,
+                this.height
+            )
+            _.map2d(this.width, this.height, (x, y) => {
+              if (noise(x, y) > 0.9) {
+                trees.push(
+                    new Tree({x, y, ctx: this.ctx})
+                )
+                this.randomPool.add(x, y)
+              }
+            })
+          }
+        }
+
+        return trees
+      } else {
+        return []
+      }
+    }
+
+    generateRocks() {
+      let rocks = []
+      for (let _i in _.range(_.randInt(3, 5))) {
+        let [x, y] = [
+          this.randomPool.randInt(0, this.width - 1),
+          this.randomPool.randInt(0, this.height - 1),
+        ]
+        // Diamond shape
+        let offsets = [
+          [
+            ..._.range(-1, 1 + 1)
+                .map((i) =>
+                    _.range(-1, 1 + 1).map((j) => [i, j])
+                )
+                .flat(),
+            [2, 0],
+            [0, 2],
+            [-2, 0],
+            [0, -2],
+          ],
+        ]
+
+        for (let [xOff, yOff] of offsets[0]) {
+          // Only generate some cells in the diamond
+          let rx = x + xOff
+          let ry = y + yOff
+          if (Math.random() > 0.6) {
+            if (this.get(rx, ry)) continue
+            rocks.push(
+                new Rocks({
+                  x: rx,
+                  y: ry,
+                  ctx: this.ctx,
+                  kind:
+                      this.level === 0
+                          ? RockKind.Surface
+                          : RockKind.Underground,
+                })
+            )
+            this.randomPool.add(rx, ry)
+          }
+        }
+      }
+      return rocks
+    }
+
+    cull() {
+      this.monsters = this.monsters.filter((m) => !m.shouldCull)
+      this.powerups = this.powerups.filter((p) => !p.shouldCull)
+    }
+
+    redraw() {
+      // Cull dead entities
+      this.cull()
+      let fowRender = (e) => {
+        if (!this.fow) return e.draw()
+        let playerToEntity = Array.from(
+            line([this.player.x, this.player.y], [e.x, e.y])
+        )
+        for (let [x, y] of playerToEntity) {
+          let ent = this.get(x, y)
+          if (ent) {
+            if (!(ent instanceof Player)) {
+              if (ent.x === e.x && ent.y === e.y)
+                return e.draw()
+
+              // Don't draw entities in the fog
+              if (!(e instanceof Ground)) {
+                return
+              }
+
+              // Do draw th ground, greyed out
+              e.draw()
+              this.ctx.drawWith(() => {
+                this.ctx.fillStyle = 'rgb(0, 0, 0, 10%)'
+                if (e.sprite)
+                  this.ctx.fillRect(
+                      e.cx,
+                      e.cy,
+                      e.sprite.width,
+                      e.sprite.height
+                  )
+              })
+
+              return
+            }
+          }
+        }
+        e.draw()
+      }
+
+      this.ctx.clear()
+      this.ground.forEach((e) => {
+        fowRender(e)
+      })
+      this.trees.forEach((e) => fowRender(e))
+      this.rocks.forEach((e) => fowRender(e))
+      this.player.draw()
+      this.monsters.forEach((e) => fowRender(e))
+      this.powerups.forEach((e) => fowRender(e))
+      fowRender(this.door)
+      this.repathMonsters()
+      if (this.debug.drawGrid) {
+        let {ctx} = this
+        ctx.drawWith(() => {
+          for (let x of _.range(0, this.width)) {
+            ctx.beginPath()
+            ctx.strokeStyle = 'black'
+            ctx.moveTo(x * 64, 0)
+            ctx.lineTo(x * 64, this.height * 64)
+            ctx.stroke()
+          }
+          for (let y of _.range(0, this.height)) {
+            ctx.beginPath()
+            ctx.strokeStyle = 'black'
+            ctx.moveTo(0, y * 64)
+            ctx.lineTo(this.width * 64, y * 64)
+            ctx.stroke()
+          }
+        })
+      }
+      if (this.cleared && !this.goingToDoor) {
+        let {ctx} = this
+        ctx.drawWith(() => {
+          ctx.fillStyle = 'rgba(50, 0, 0, 25%)'
+          ctx.fillRect(
+              0,
+              0,
+              this.width * 64,
+              this.height * 64
+          )
+          ctx.textAlign = 'center'
+          ctx.font = '10rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'blue'
+          ctx.fillText(
+              'You win!',
+              (this.width * 64) / 2,
+              (this.height * 64) / 6
+          )
+          ctx.font = '4rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'white'
+          ctx.fillText(
+              'Press any key and continue to door',
+              (this.width * 64) / 2,
+              (this.height * 64) / 3
+          )
+          ctx.font = '3rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'white'
+          ctx.fillText(
+              'Press R to start over',
+              (this.width * 64) / 2,
+              ((this.height * 64) / 6) * 3
+          )
+        })
+      }
+      if (!this.alive) {
+        let {ctx} = this
+        ctx.drawWith(() => {
+          ctx.fillStyle = 'rgba(50, 0, 0, 25%)'
+          ctx.fillRect(
+              0,
+              0,
+              this.width * 64,
+              this.height * 64
+          )
+          ctx.textAlign = 'center'
+          ctx.font = '10rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'red'
+          ctx.fillText(
+              'Game Over',
+              (this.width * 64) / 2,
+              (this.height * 64) / 6
+          )
+          ctx.font = '7rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'white'
+          ctx.fillText(
+              'Start Over?',
+              (this.width * 64) / 2,
+              (this.height * 64) / 3
+          )
+          if (this.player.lastDamageKind instanceof Monster) {
+            ctx.font = '5rem Arial'
+            ctx.shadowColor = 'black'
+            ctx.shadowBlur = 10
+            ctx.fillStyle = 'white'
+            ctx.fillText(
+                `Killed by: ${this.player.lastDamageKind.kind.name}`,
+                (this.width * 64) / 2,
+                ((this.height * 64) / 3) * 2
+            )
+          }
+          ctx.font = '4rem Arial'
+          ctx.shadowColor = 'black'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'white'
+          ctx.fillText(
+              'Press any key',
+              (this.width * 64) / 2,
+              ((this.height * 64) / 6) * 3
+          )
+        })
+      }
+    }
+
+    get(x, y) {
+      if (this.player.x === x && this.player.y === y)
+        return this.player
+      let monster = this.monsters.find(
+          (monster) => monster.x === x && monster.y === y
+      )
+      if (monster) return monster
+      let tree = this.trees.find(
+          (tree) => tree.x === x && tree.y === y
+      )
+      if (tree) return tree
+      let rock = this.rocks.find(
+          (rock) => rock.x === x && rock.y === y
+      )
+      if (rock) return rock
+      let potion = this.powerups.find(
+          (potion) => potion.x === x && potion.y === y
+      )
+      if (potion) return potion
+      if (this.door?.x === x && this.door?.y === y)
+        return this.door
+      return null
+    }
+
+    movePlayer(dx, dy) {
+      let {player} = this
+      player.move(dx, dy)
+      this.repathMonsters()
+      this.moveMonsters()
+      this.redraw()
+    }
+
+    useItem() {
+      let {player} = this
+      player.equipped?.use(player, this)
+      player.equipped = null
+      $('#inventory-slot').src =
+          AssetManager.assets.debugOverlay.asset.src
+    }
+
+    repathMonsters() {
+      console.debug('repathing all monsters')
+      for (let monster of this.monsters) {
+        monster.repath()
+      }
+    }
+
+    moveMonsters() {
+      console.debug('running all monster ai')
+      for (let monster of this.monsters) {
+        monster.doAi()
+      }
+      this.redraw()
+    }
+
+    updateWaypoints() {
+      console.debug('updating waypoints')
+      for (let monster of this.monsters) {
+        monster.chooseNewWaypoint()
+      }
+    }
+
+    everyNTicksDo(ticks, cb) {
+      if (this.tick % ticks === 0) {
+        cb()
+      }
+    }
+
+    doTick() {
+      this.tick += 1
+      this.everyNTicksDo(10, () => {
+        if (this.running && this.debug.idleWaypointUpdate)
+          this.updateWaypoints()
+      })
+
+      this.everyNTicksDo(1, () => {
+        if (this.running && this.debug.idleMoveMobs)
+          this.moveMonsters()
+      })
+    }
+  }
+
+  // Main class
+  class Universe {
+    WORLD_WIDTH = 20
+    WORLD_HEIGHT = 16
+    canvas = null
+    /** @type {CanvasRenderingContext2D & My2dContext} */
+    ctx = null
+    destructors = []
+
+    createNewWorld(level) {
+      window['universe'] = null
+      window['world'] = null
+      window['w'] = null
+      this.world = new World(
+          this.WORLD_WIDTH,
+          this.WORLD_HEIGHT,
+          this.ctx,
+          level
+      )
+
+      this.world.on(Signal.LevelCleared, (_s, level) => {
+        this.createNewWorld(level + 1)
+        this.world.redraw()
+      })
+
+      this.world.redraw()
+      window['universe'] = this
+      window['world'] = this.world
+      window['w'] = this.world
+      $('#ui-inventory').replaceWith(
+          h('div#ui-inventory', [
+            h('h2{Inventory}', [
+              h('img.pixels#inventory-slot', {
+                width: 64,
+                height: 64,
+                style: 'border: solid 4px black;',
+              }),
+            ]),
+          ])
+      )
+
+      this.setupDebugUi(false)
+    }
+
+    async setup() {
+      await AssetManager.loadAll()
+
+      this.canvas = $('#root')
+      // this.canvas.width = this.WORLD_WIDTH * 64
+      // this.canvas.height = this.WORLD_HEIGHT * 64
+      this.ctx = new My2dContext(
+          this.canvas.getContext('2d'),
+          this.canvas.width,
+          this.canvas.height
+      )
+      this.ctx.imageSmoothingEnabled = false
+
+      setInterval(() => {
+        if (this.world.alive) this.world.doTick()
+      }, 750)
+
+      this.destructors.push(
+          handleInput({
+            precondition: () => this.world?.running,
+            up: () => this.world?.movePlayer(0, -1),
+            down: () => this.world?.movePlayer(0, 1),
+            left: () => this.world?.movePlayer(-1, 0),
+            right: () => this.world?.movePlayer(1, 0),
+            space: () => this.world?.useItem(),
+            all: (k) => {
+              let {world} = this
+
+              if (
+                  world?.alive === false ||
+                  (world?.cleared &&
+                      !world?.goingToDoor &&
+                      k === 'r')
+              ) {
+                this.createNewWorld()
+              }
+
+              if (
+                  world?.alive &&
+                  world?.cleared &&
+                  k !== 'r'
+              ) {
+                world.goingToDoor = true
+              }
+            },
+            other: (k) => {
+              let {world} = this
+              if (k === 'z') {
+                world?.player.face(-1, 0)
+                world?.redraw()
+              }
+              if (k === 'c') {
+                world?.player.face(1, 0)
+                world?.redraw()
+              }
+              if (k === 'p') {
+                world.player.sprite =
+                    AssetManager.assets.playerDark
+                world?.redraw()
+              }
+              if (k === 'm') {
+                world.moveMonsters(0)
+                world?.redraw()
+              }
+            },
+          })
+      )
+    }
+
+    setupDebug() {
+      let debug = window.location.search.endsWith('?debug')
+      this.world.debug.drawGrid = debug
+      this.world.debug.mobPath = debug
+      this.world.redraw()
+
+      this.setupDebugUi(debug)
+
+      let listener = (e) => {
+        function getCursorPosition(canvas, event) {
+          var b = canvas.getBoundingClientRect()
+          var scale = canvas.width / parseFloat(b.width)
+          var x = (event.clientX - b.left) * scale
+          var y = (event.clientY - b.top) * scale
+          return [x, y]
+        }
+
+        let [x, y] = getCursorPosition(this.canvas, e)
+        let screen = [x, y]
+        // x *= 1.75
+        // y *= 1.75
+        let canvasSpace = [x, y]
+        x /= 64
+        y /= 64
+        x = Math.floor(x)
+        y = Math.floor(y)
+        console.info(
+            `Click at screen: ${screen}, canvas: ${canvasSpace}, world: ${[
+              x,
+              y,
+            ]}`
+        )
+        this.world.debug.gridClick?.call(null, x, y)
+
+        this.world.redraw()
+      }
+      this.canvas.addEventListener('click', listener)
+      this.destructors.push(() =>
+          this.canvas.removeEventListener('click', listener)
+      )
+    }
+
+    setupDebugUi(open) {
+      let dbgPlacer = {
+        onclick: (e) => {
+          let {kind, species} =
+              e.target.parentElement.dataset
+          let {world} = this
+          if (kind === 'tree') {
+            world.debug.gridClick = (x, y) => {
+              world.trees.push(
+                  new Tree({x, y, ctx: world.ctx})
+              )
+            }
+          } else if (kind === 'rock') {
+            world.debug.gridClick = (x, y) => {
+              world.rocks.push(
+                  new Rocks({x, y, ctx: world.ctx})
+              )
+            }
+          } else if (kind === 'ground') {
+            world.debug.gridClick = (x, y) => {
+              world.ground.push(
+                  new Ground({x, y, ctx: world.ctx})
+              )
+            }
+          } else if (kind === 'underground') {
+            world.debug.gridClick = (x, y) => {
+              world.ground.push(
+                  new Ground({
+                    x,
+                    y,
+                    ctx: world.ctx,
+                    underground: true,
+                  })
+              )
+            }
+          } else if (kind === 'monster') {
+            world.debug.gridClick = (x, y) => {
+              world.monsters.push(
+                  new Monster({
+                    x,
+                    y,
+                    kind: MonsterType.named(species),
+                    world,
+                    ctx: world.ctx,
+                  })
+              )
+            }
+          } else if (kind === 'selector') {
+            world.debug.gridClick = (x, y) => {
+              let t = world.get(x, y)
+              let c = world.debug.selectedEntity
+              if (t) {
+                if (t === c) {
+                  c = null
+                  return
+                }
+              }
+              if (c instanceof Monster) {
+                c.waypoint = [x, y]
+                c.path = astarSimple(
+                    [c.x, c.y],
+                    [x, y],
+                    world
+                )
+                return
+              }
+              world.debug.selectedEntity = t
+            }
+          } else if (kind === 'delete') {
+            world.debug.gridClick = (x, y) => {
+              let t = world.get(x, y)
+              if (t instanceof Entity) {
+                t.die()
+              } else if (t instanceof Tree) {
+                this.world.trees.removeElement(t)
+              } else if (t instanceof Rocks) {
+                this.world.rocks.removeElement(t)
+              }
+            }
+          }
+        },
+      }
+
+      let debugEditor = h('div', [
+        'Debug Editor:',
+        h('div', [
+          h(
+              'button',
+              {'data-kind': 'selector', ...dbgPlacer},
+              [
+                h('img', {
+                  src: AssetManager.assets.debugOverlay
+                      .asset.src,
+                  width: 32,
+                }),
+              ]
+          ),
+          h('button', {'data-kind': 'tree', ...dbgPlacer}, [
+            h('img', {
+              src: AssetManager.assets.debugTree.asset
+                  .src,
+              width: 32,
+            }),
+          ]),
+          h('button', {'data-kind': 'rock', ...dbgPlacer}, [
+            h('img', {
+              src: AssetManager.assets.debugRocks.asset
+                  .src,
+              width: 32,
+            }),
+          ]),
+          h(
+              'button',
+              {'data-kind': 'ground', ...dbgPlacer},
+              [
+                h('img', {
+                  src: AssetManager.assets.ground[1].asset
+                      .src,
+                  width: 32,
+                }),
+              ]
+          ),
+          h(
+              'button',
+              {'data-kind': 'underground', ...dbgPlacer},
+              [
+                h('img', {
+                  src: AssetManager.assets.underground[0]
+                      .asset.src,
+                  width: 32,
+                }),
+              ]
+          ),
+          h(
+              'button',
+              {'data-kind': 'delete', ...dbgPlacer},
+              [
+                'Delete',
+                h('img', {
+                  src: AssetManager.assets.debugOverlay
+                      .asset.src,
+                  width: 32,
+                }),
+              ]
+          ),
+          ...[...MonsterType].map((monster) =>
+              h(
+                  'button',
+                  {
+                    'data-kind': 'monster',
+                    'data-species': monster.name,
+                    ...dbgPlacer,
+                  },
+                  [
+                    h('img', {
+                      src: AssetManager.assets.monsters[
+                          monster
+                          ].asset.src,
+                      width: 32,
+                    }),
+                  ]
+              )
+          ),
+        ]),
+      ])
+      $('#ui-root').replaceWith(
+          h('div#ui-root', [
+            h('details', {$open: open}, [
+              h('summary{Debug}'),
+              h('input', {
+                type: 'checkbox',
+                id: 'fog-of-war',
+                onclick: (e) =>
+                    (this.world.fow = e.target.checked),
+                $checked: this.world.fow,
+              }),
+              h('label{Fog of War}', {for: 'fog-of-war'}),
+              h('br'),
+              h('input', {
+                type: 'checkbox',
+                id: 'mobPaths',
+                onclick: (e) => {
+                  this.world.debug.mobPath =
+                      e.target.checked
+                  this.world.redraw()
+                },
+                $checked: this.world.debug.mobPath,
+              }),
+              h('label{Show Enemy Paths}', {
+                for: 'mobPaths',
+              }),
+              h('br'),
+              h('input', {
+                type: 'checkbox',
+                id: 'showGrid',
+                onclick: (e) => {
+                  this.world.debug.drawGrid =
+                      e.target.checked
+                  this.world.redraw()
+                },
+                $checked: this.world.debug.drawGrid,
+              }),
+              h('label{Show Grid}', {for: 'showGrid'}),
+              h('br'),
+              h('input', {
+                type: 'checkbox',
+                id: 'idleMove',
+                onclick: (e) => {
+                  this.world.debug.idleMoveMobs =
+                      e.target.checked
+                },
+                $checked: this.world.debug.idleMoveMobs,
+              }),
+              h('label{Idle Move Mobs}', {for: 'idleMove'}),
+              h('br'),
+              h('input', {
+                type: 'checkbox',
+                id: 'idleWaypoint',
+                onclick: (e) => {
+                  this.world.debug.idleWaypointUpdate =
+                      e.target.checked
+                },
+                $checked:
+                this.world.debug.idleWaypointUpdate,
+              }),
+              h('label{Idle Update Waypoints}', {
+                for: 'idleWaypoint',
+              }),
+              debugEditor,
+              h('button{New Waypoints}', {
+                onclick: () => {
+                  this.world.updateWaypoints()
+                  this.world.redraw()
+                },
+              }),
+              h('br'),
+              h('button{Move Mobs}', {
+                onclick: () => {
+                  this.world.moveMonsters()
+                  this.world.redraw()
+                },
+              }),
+              h('br'),
+              h('button{Reset}', {
+                onclick: () => {
+                  this.createNewWorld()
+                },
+              }),
+            ]),
+          ])
+      )
+    }
+  }
+
+  let universe = new Universe()
+  universe
+      .setup()
+      .then(() => universe.createNewWorld())
+      .then(() => universe.setupDebug())
+</script>
+</body>
+</html>

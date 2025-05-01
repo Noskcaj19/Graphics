@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Demo</title>
+</head>
+
+<body>
+  <main>
+    <div id="ui-root">
+      <p id="score"></p>
+    </div>
+    <!--            width="640"-->
+    <!--            height="480"-->
+    <!-- <canvas id="root" width="1280" height="960" style="width: 80%; height: 80%"></canvas> -->
+    <canvas id="root" width="1280" height="960" style="width: 80%; height: 80%"></canvas>
+    <style>
+      html {
+        background-color: rgb(10, 10, 10);
+        color: rgb(244, 244, 244);
+      }
+    </style>
+  </main>
+</body>
+<!-- <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script> -->
+<!--<script>-->
+<!--    Babel.registerPreset("env-jackson", {-->
+<!--      presets: [[Babel.availablePresets["typescript"]]],-->
+<!--      plugins: [-->
+<!--        [-->
+<!--          Babel.availablePlugins["proposal-decorators"],-->
+<!--          { version: "2023-01" },-->
+<!--        ],-->
+<!--          [-->
+<!--              Babel.availablePlugins["proposal-pipeline-operator"],-->
+<!--            { proposal: "hack", topicToken: "%" }-->
+<!--          ]-->
+<!--      ],-->
+<!--    })-->
+<!--</script>-->
+<!--<script src="inspector/core/embed.js"></script>-->
+<!--<script type="text/babel" data-type="module" data-presets="env-jackson">-->
+<script type="module">
+  // import "https://esm.sh/webgl-lint@1.10.1";
+  // import "./inspector/core/embed.js"
+  import { WSClient } from "./kcaj-p2p/dist/index.js"
+
+  import {
+    Renderer,
+    PlaneWithNormals,
+    GravityComponent,
+    ManualBlender,
+    Component,
+    WobbleComponent,
+    Collider,
+    SphereColliderComponent,
+    RectangleColliderComponent,
+    Scene,
+    Cube,
+    Node,
+    Icosphere,
+    Gltf2Node
+  } from "./lib/renderer.js";
+
+  // import {mat4, vec3, vec4, quat} from "https://esm.sh/gl-matrix@latest?dev";
+  import { mat4, vec3, vec4, Vec3, quat, Quat } from "./lib/glutils.js";
+  import spector from "https://esm.sh/spectorjs@latest";
+  import { _, h, $ } from "./lib/libjackson.js";
+
+  // let icosphere = await fetch("./assets/icosphere.gltf").then(r => r.text())
+  let simpleCoin = await fetch("./assets/BlenderCoin.gltf").then(r => r.text())
+  let khronosCube = await fetch("./assets/BrickCube.gltf").then(r => r.text())
+  let voroniWallGltf = await fetch("./assets/VoroniWall.gltf").then(r => r.text())
+  let ship = await fetch("./assets/WeirdPointShip.gltf").then(r => r.text())
+  let badGuyGltf = await fetch("./assets/BadGuy.gltf").then(r => r.text())
+
+
+  // var SPECTOR = new spector.Spector();
+  // SPECTOR.spyCanvases()
+  // SPECTOR.displayUI();
+
+  let parms = new URLSearchParams(window.location.search)
+  let host = parms.has("host")
+  let group = parms.get("group") ?? "Testing"
+  let name = parms.get("name")
+
+  let websocket = new WebSocket("wss://mythos.tailnet-3006.ts.net/ws/" + group)
+
+  let connected = false
+
+  let knownPlayers = new Set()
+  let players = { [name]: {} }
+  let mpData = { players: { [name]: {} } }
+  window.mpData = mpData
+
+
+
+  function makeRemotePlayer(id) {
+    let remotePlayer = new Gltf2Node({ str: ship })
+    remotePlayer.translation = new Vec3(0, 3, 0)
+    remotePlayer.scale = new Vec3(2, 2, 2)
+    remotePlayer.addComponent(new class extends Component {
+      onUpdate(timestamp, frameDelta) {
+        let r = mpData.players[id]
+        console.log(r)
+        this.node.translation = new Vec3(...(r?.translation ?? []))
+        this.node.rotation = new Quat(...(r?.rotation ?? []))
+      }
+    })
+    return remotePlayer
+  }
+  /** * @type {WSClient} */
+  let mp = new WSClient(websocket, name)
+
+  mp.on('data', (data) => {
+    data = JSON.parse(data)
+    if (data["from"] === name) return
+    if (data["connected"]) {
+      // mp.send({""})
+      scene.addNode(makeRemotePlayer(data["from"]))
+    }
+    if (data["data"]) {
+      _.mergeDeep(mpData, data.data)
+    }
+  })
+  mp.on('connected', () => {
+    mp.send(JSON.stringify({ from: name, "connected": true }))
+  })
+  // let mp;
+  // if (host && name) {
+  //   mp = new Server(websocket, name)
+  //   connected = true
+
+  //   mp.on('connection', (data)=>{
+  //     console.log(data)
+  //     scene.addNode(makeRemotePlayer(data.id))
+  //   })
+  //   mp.on('data',(data)=>{
+  //     console.log("got data", data)
+  //     _.mergeDeep(mpData,JSON.parse(data))
+  //   })
+  // } else {
+  //   mp = new Client(websocket, name)
+  //   mp.on('connected', () => {
+  //     connected = true
+  //     console.log("connected")
+  //   })
+  //   mp.on('data', (data) => {
+  //     _.mergeDeep(mpData,JSON.parse(data))
+  //     for (let [id, player] of Object.entries(mpData.players)) {
+  //       if (id===name)continue
+  //       if (knownPlayers.has(id)) {
+  //         continue
+  //       } else {
+  //         knownPlayers.add(id)
+  //         scene.addNode(makeRemotePlayer(id))
+  //       }
+  //     }
+  //   })
+  // }
+  window.mp = mp
+
+
+  let gl = document.getElementById("root").getContext("webgl2")
+
+
+  let renderer = new Renderer(gl)
+  let scene = new Scene()
+
+  scene.setRenderer(renderer)
+
+  let removal = new Icosphere()
+
+  class CoinMarker extends Component {
+  }
+
+  class BadGuyMarker extends Component {
+  }
+
+  class BulletMarker extends Component {
+  }
+
+  class ScoreStorage extends Component {
+    score = 0
+    dead = false
+
+    addScore(score = 1) {
+      this.score += score
+    }
+  }
+
+  class SelfDestruct extends Component {
+    lifespan = 0
+
+    constructor(lifespan) {
+      super();
+      this.lifespan = lifespan;
+    }
+
+    onUpdate(timestamp, frameDelta) {
+      if (this.lifespan === 0) {
+        this.node.dead = true
+        // this.node.parent.removeNode(this.node)
+      }
+      this.lifespan -= 1
+    }
+  }
+
+  class Projectile extends Component {
+    velocity = 0
+    rotation
+
+    constructor(vel) {
+      super()
+      this.velocity = vel
+    }
+
+    onUpdate(timestamp, frameDelta) {
+      if (!this.rotation) this.rotation = this.node.rotation.copy()
+      let forward = new Vec3(0, 0, this.velocity)
+      forward = forward.transformQuat(this.rotation)
+      this.node.translation = this.node.translation.add(forward)
+    }
+  }
+
+  let makeBullet = () => {
+    let bullet = new Node()
+    let bulletMesh = new Icosphere()
+    const s = 200
+    bulletMesh.addComponent(new WobbleComponent({ x: s, y: s, z: s }))
+    bullet.addNode(bulletMesh)
+    bullet.scale = new Vec3(0.5, 0.5, 0.5)
+    bullet.addComponent(new SphereColliderComponent(1, true))
+    bullet.addComponent(new Projectile(0.5))
+    bullet.addComponent(new SelfDestruct(120))
+    bullet.addComponent(new BulletMarker())
+    bullet.addComponent(new class extends Component {
+      onUpdate(timestamp, frameDelta) {
+        let moves = this.node.components.find(BadGuyMoves)
+        if (Math.abs(this.node.translation.x) > 11) {
+          // this.node.parent.removeNode(this.node)
+          this.node.dead =true
+        }
+        if (Math.abs(this.node.translation.z) > 11) {
+          // this.node.parent.removeNode(this.node)
+          this.node.dead =true
+        }
+      }
+    })
+    return bullet
+  }
+
+
+  scene.addComponent(new ScoreStorage())
+
+  let playerNode = new Gltf2Node({ str: ship })
+  playerNode.scale = new Vec3(2, 2, 2)
+  playerNode.addComponent(new GravityComponent())
+  // playerNode.addComponent(new WobbleComponent({x: 85, y: 80, z: 0}))
+  playerNode.addComponent(new SphereColliderComponent(1))
+  playerNode.addComponent(new class PlayerController extends Component {
+    onUpdate(timestamp, frameDelta) {
+
+
+      if (inputs["q"]) {
+        let left = new Vec3(.1, 0, 0)
+        left = left.transformQuat(this.node.rotation)
+        this.node.translation = this.node.translation.add(left)
+      }
+      if (inputs["e"]) {
+        let right = new Vec3(-.1, 0, 0)
+        right = right.transformQuat(this.node.rotation)
+        this.node.translation = this.node.translation.add(right)
+      }
+      if (inputs["w"] || inputs["s"]) {
+        let forward = new Vec3(0, 0, (inputs["w"] ? -1 : 1) * .1)
+        forward = forward.transformQuat(this.node.rotation)
+        this.node.translation = this.node.translation.add(forward)
+      }
+      if (inputs["a"]) {
+        this.node.rotation = this.node.rotation.rotateY(.1)
+      }
+      if (inputs["d"]) {
+        this.node.rotation = this.node.rotation.rotateY(-.1)
+      }
+
+      if (inputs[" "] && !prevInputs[" "]) {
+        let bullet = makeBullet()
+        bullet.translation = this.node.translation.copy()
+        bullet.rotation = this.node.rotation.copy()
+        bullet.rotation = bullet.rotation.rotateY(Math.PI)
+
+        scene.addNode(bullet)
+      }
+      // send our location
+
+      mpData['players'][name]['translation'] = [...this.node.translation._data]
+      mpData['players'][name]['rotation'] = [...this.node.rotation._data]
+
+      // this.node.components.find(GravityComponent).jump = !!inputs["j"];
+    }
+  })
+  playerNode.addComponent(new class extends Component {
+    onUpdate(timestamp, frameDelta) {
+      if (this.node.translation.y < -7) {
+        this.node.translation.y = 7
+      }
+    }
+  })
+  playerNode.addComponent(new class DiesOnContact extends Component {
+    onUpdate(timestamp, frameDelta) {
+      let collider = this.node.components.find(SphereColliderComponent)
+      if (collider.colliding) {
+        for (let collision of collider.colliders) {
+          if (collision.node.components.find(BadGuyMarker)) {
+            this.node.scene.components.find(ScoreStorage).dead = true
+            // this.node.parent.removeNode(this.node)
+            this.node.dead =true
+          }
+        }
+      }
+    }
+  })
+  playerNode.translation = new Vec3(0, 3, 0)
+  scene.addNode(playerNode)
+
+  let badGuy = new Gltf2Node({ str: badGuyGltf })
+  badGuy.scale = new Vec3(1.5, 1.5, 1.5)
+  badGuy.translation = new Vec3(6, 3, 6)
+  badGuy.addComponent(new class Spins extends Component {
+    onUpdate(timestamp, frameDelta) {
+      this.node.rotation = this.node.rotation.rotateY(0.1)
+      // quat.rotateX(this.node.rotation, this.node.rotation, 0.05)
+    }
+  })
+
+  class BadGuyMoves extends Component {
+    dir = [.1, 0, 0]
+
+    constructor() {
+      super();
+      // TODO: !!! Normalize and scale
+      this.dir = [_.urandom() * .2, 0, _.urandom() * .2]
+    }
+
+    onUpdate(timestamp, frameDelta) {
+      let forward = new Vec3(...this.dir)
+      // vec3.transformQuat(forward, forward, this.node.rotation)
+      this.node.translation.add(forward)
+    }
+  }
+
+  badGuy.addComponent(new BadGuyMoves())
+  badGuy.addComponent(new class BoundaryBounce extends Component {
+    onUpdate(timestamp, frameDelta) {
+      let moves = this.node.components.find(BadGuyMoves)
+      if (Math.abs(this.node.translation.x) > 11) {
+        moves.dir[0] = -moves.dir[0]
+      }
+      if (Math.abs(this.node.translation.z) > 10) {
+        moves.dir[2] = -moves.dir[2]
+      }
+    }
+  })
+  badGuy.addComponent(new BadGuyMarker())
+  badGuy.addComponent(new SphereColliderComponent(1, true))
+  badGuy.addComponent(new class Kills extends Component {
+    onUpdate(timestamp, frameDelta) {
+      let collider = this.node.components.find(SphereColliderComponent)
+      if (collider.colliding) {
+        for (let collision of collider.colliders) {
+          if (collision.node.components.find(BulletMarker)) {
+            // this.node.parent.removeNode(this.node)
+          this.node.dead = true
+          }
+        }
+      }
+    }
+  })
+  scene.addNode(badGuy)
+
+  let coinSpawner = new class CoinSpanwer extends Component {
+    timer = 0
+    target = 0
+
+    onUpdate(timestamp, frameDelta) {
+      let numCoins = 0
+      for (let child of this.node.children) {
+        if (child.components.find(CoinMarker)) {
+          numCoins += 1
+        }
+      }
+
+      if (this.target === this.timer) {
+        if (numCoins < 7) {
+          let coin = this.makeCoin()
+          const r = 8
+          coin.translation = new Vec3(_.randInt(-r, r), 2, _.randInt(-r, r))
+          this.node.addNode(coin)
+        }
+
+        this.timer = _.randInt(20, 100)
+      }
+      // this.timer -= 1
+    }
+
+    makeCoin() {
+      let coin = new Gltf2Node({ str: simpleCoin });
+      coin.addComponent(new CoinMarker())
+      coin.addComponent(new SphereColliderComponent(1, true))
+      coin.addComponent(new WobbleComponent({ x: 85, y: 0, z: 85 }))
+      coin.addComponent(new class extends Component {
+        onUpdate(timestamp, frameDelta) {
+          if (this.node.components.find(Collider).colliding) {
+            console.log("Coin collect")
+            this.node.scene.components.find(ScoreStorage).addScore()
+            // this.node.clearRenderPrimitives()
+            this.node.dead= true
+            // this.node.parent.removeNode(this.node)
+          }
+        }
+      })
+      // coin.scale = vec3.fromValues(20, 20, 20)
+      return coin
+    }
+  }
+  scene.addComponent(coinSpawner)
+
+  let floor = new Gltf2Node({ str: khronosCube })
+  floor.addComponent(new RectangleColliderComponent(12 * 2, 1, 12 * 2))
+  scene.addNode(floor)
+
+  let bWall = new Gltf2Node({ str: voroniWallGltf })
+  // floor.addComponent(new RectangleColliderComponent(12 * 2, 1, 12 * 2))
+  // // quat.rotateX(ltWall.rotation, ltWall.rotation, Math.PI/2)
+  bWall.translation = new Vec3(0, 2, 12)
+  scene.addNode(bWall)
+
+  let lWall = new Gltf2Node({ str: voroniWallGltf })
+  // floor.addComponent(new RectangleColliderComponent(12 * 2, 1, 12 * 2))
+  lWall.rotation = lWall.rotation.rotateY(Math.PI / 2)
+  lWall.translation = new Vec3(-12, 2, 0)
+  scene.addNode(lWall)
+
+
+  let tWall = new Gltf2Node({ str: voroniWallGltf })
+  // floor.addComponent(new RectangleColliderComponent(12 * 2, 1, 12 * 2))
+  // // quat.rotateX(ltWall.rotation, ltWall.rotation, Math.PI/2)
+  tWall.translation = new Vec3(0, 2, -12)
+  scene.addNode(tWall)
+
+  let rWall = new Gltf2Node({ str: voroniWallGltf })
+  // floor.addComponent(new RectangleColliderComponent(12 * 2, 1, 12 * 2))
+  rWall.rotation = rWall.rotation.rotateY(Math.PI / 2)
+  rWall.translation = new Vec3(12, 2, 0)
+  scene.addNode(rWall)
+
+
+  let doFrame = () => {
+    scene.frame((frameΔ) => {
+      requestAnimationFrame(go)
+
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clearDepth(1.0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
+
+      let perspectiveMatrix = mat4.create();
+      const fieldOfView = (45 * Math.PI) / 180;
+      const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+      const zNear = 0.1;
+      const zFar = 100.0;
+      mat4.perspective(perspectiveMatrix, fieldOfView, aspect, zNear, zFar)
+      let view = mat4.create()
+      let viewAngle = quat.create()
+      quat.rotateX(viewAngle, viewAngle, -Math.PI / 2)
+      mat4.fromRotationTranslation(view, viewAngle, vec3.fromValues(0, 35, 0))
+
+      let el = [
+        h("p#score", scene.components.find(ScoreStorage).score.toString()),
+      ]
+      if (scene.components.find(ScoreStorage).dead) {
+        el.push(h("p#dead", "Dead"))
+      }
+
+      $("#ui-root").replaceChildren(h("root", el))
+
+      scene.draw(perspectiveMatrix, view)
+      mp.send(JSON.stringify({from:name, data:mpData}))
+      Object.assign(prevInputs, inputs)
+    })
+  }
+
+  let inputs = {}
+  let prevInputs = {}
+  document.addEventListener('keydown', ev => {
+    inputs[ev.key] = true
+  })
+  document.addEventListener('keyup', ev => {
+    inputs[ev.key] = false
+  })
+
+
+  requestAnimationFrame(doFrame)
+  window.go = doFrame
+</script>
+
+</html>

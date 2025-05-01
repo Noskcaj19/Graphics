@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>defer test</title>
+  <style>
+    * {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 2px;
+    }
+
+    main {
+      text-align: center;
+    }
+
+    canvas {
+      border: solid black 1px;
+    }
+
+    html {
+      /* background-color: black; */
+    }
+
+  </style>
+</head>
+
+<body>
+<main>
+  <div id="ui-root"></div>
+  <canvas
+          id="root"
+          width="640"
+          height="480"
+  ></canvas>
+</main>
+<!-- libjack.js -->
+<script>
+   function $(selector) {
+    return document.querySelector(selector)
+  }
+
+  // Object.defineProperty(Array.prototype, "removeElement", {
+  //     value:
+  //         function (target) {
+  //             let index = this.indexOf(target)
+  //             if (index === -1) {
+  //                 return -1
+  //             }
+  //             this.splice(index, 1)
+  //             return this
+  //         }
+  // })
+
+  // A [bad] [partial] reimplementation of the excellent lodash
+   let _ = {}
+
+
+  _.manhattan = function (pos0, pos1) {
+    let d1 = Math.abs(pos1[0] - pos0[0])
+    let d2 = Math.abs(pos1[1] - pos0[1])
+    return d1 + d2
+  }
+  _.deg2rad = (deg) => deg * (Math.PI / 180)
+  _.rad2deg = (rad) => rad * (180 / Math.PI)
+
+  _.chunk = (arr, size = 1) => {
+    let result = []
+    let index = 0
+    while (index < arr.length) {
+      result.push(arr.slice(index, index += size))
+    }
+
+    return result
+  }
+
+  _.scale = (x, inMin, inMax, outMin, outMax) =>
+          ((x - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin
+
+
+  _.contains = function (container, needle) {
+    return container.find(a => _.equals(a, needle)) ?? false
+  }
+  _.equals = function (a, b) {
+    if (typeof a !== typeof b) {
+      return false
+    }
+    if (typeof a === "number" || typeof a === "string") {
+      return a === b
+    }
+    if (a instanceof Array) {
+      return _.zip(a, b).every(([l, r]) => _.equals(l, r))
+    } else if (a instanceof Object) {
+      return _.zip(Object.entries(a), Object.entries(b)).every(([l, r]) => _.equals(l, r))
+    }
+    throw "todo"
+  }
+
+  _.zip = function () {
+    let out = []
+    let arr = Array.from(arguments)
+    for (let i in _.range(Math.max(...arr.map(a => a.length)))) {
+      out.push(arr.map(a => a[i]))
+    }
+    return out
+  }
+  // from a to b or from 0 to a
+  _.range = function range(a, b) {
+    if (b) {
+      let step = a > b ? -1 : 1
+      let size = a > b ? a - b : b - a
+      return [...Array(size).keys()].map(i => step * i + a);
+    }
+    return [...Array(a).keys()];
+  }
+  _.map2d = (x, y, fn) => {
+    if (typeof x === "number") {
+      return _.map2d(_.range(x), _.range(y), fn)
+    } else {
+      return x.map(a => y.map(b => fn(a, b))).flat()
+    }
+  }
+  _.randInt = (lower, upper) => lower + Math.floor(Math.random() * (upper - lower + 1))
+  _.urandom = () => Math.random() * 2 - 1
+  _.clamp = (lower, upper, val) => Math.max(Math.min(upper, val), lower)
+  _.ndRandom = (min, max, skew) => {
+    let u = Math.random(), v = Math.random()
+    let num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v)
+    if (num > 1 || num < 0) {
+      num = _.ndRandom(min, max, skew)
+    } else {
+      num = Math.pow(num, skew)
+      num *= max - min
+      num += min
+    }
+    return num
+  }
+
+  // Object.defineProperties(Object, {
+  //     "map": {
+  //         value: (obj, fn) => {
+  //             return Object.fromEntries(Object.entries(obj).map(fn))
+  //         }
+  //     },
+  //     "asyncMap": {
+  //         value: async (obj, fn) => {
+  //             return Object.fromEntries(await Promise.all(Object.entries(obj).map(async (e) => await fn(e))))
+  //         }
+  //     }
+  // })
+
+  function parseName(str) {
+    let result = /^[A-z0-9-]+/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [result[0], str.substring(result.indices[0][1])]
+  }
+
+  function parseText(str) {
+    let result = /^\{([^}]+)\}/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [result[1], str.substring(result.indices[0][1])]
+  }
+
+  function parseIdOrClasses(str) {
+    let result = /^(?:\.([A-z][A-z-.]*))|(?:#([A-z-]+))/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    if (result[0][0] === '.') {
+      return [
+        {
+          type: 'classes',
+          val: result[1].split('.'),
+        },
+        str.substring(result.indices[1][1]),
+      ]
+    } else {
+      return [
+        { type: 'id', val: result[2] },
+        str.substring(result.indices[2][1]),
+      ]
+    }
+  }
+
+  function parseMultiplicity(str) {
+    let result = /^\*(\d+)/du.exec(str)
+
+    if (result == null) {
+      return [null, str]
+    }
+
+    return [
+      parseInt(result[1]),
+      str.substring(result.indices[0][1]),
+    ]
+  }
+
+  function parseAll(str, parsers) {
+    let results = {}
+    for (let parser of parsers) {
+      let data
+      ;[data, str] = parser(str)
+
+      if (data !== null) {
+        let { type, val } = data
+        Object.assign(results, {
+          [type]: val,
+        })
+      }
+    }
+    return [results, str]
+  }
+
+  function parseOptionalIdAndClasses(str) {
+    return parseAll(str, [parseIdOrClasses, parseIdOrClasses])
+  }
+
+  function parseElement(str) {
+    var [name, str] = parseName(str)
+    var [{ id, classes }, str] = parseOptionalIdAndClasses(str)
+    var [text, str] = parseText(str)
+    var [multiplicity, str] = parseMultiplicity(str)
+
+    return [{ name, id, classes, text, multiplicity }, str]
+  }
+
+   function h(elDescriptor, attrs, children) {
+    if (typeof attrs == 'string') {
+      children = [attrs]
+      attrs = {}
+    }
+    if (
+            !children &&
+            (attrs instanceof Array || attrs instanceof Node)
+    ) {
+      children = attrs
+      attrs = {}
+    }
+    children = children instanceof Node ? [children] : children
+    attrs = attrs || {}
+    let { name, id, classes, text, multiplicity } =
+            parseElement(elDescriptor)[0]
+    let el = document.createElement(name)
+    if (id) el.setAttribute('id', id)
+    classes?.forEach((className) => el.classList.add(className))
+    if (text) {
+      el.appendChild(document.createTextNode(text))
+    }
+
+    for (let [attr, val] of Object.entries(attrs)) {
+      if (val === undefined) continue
+      if (attr.startsWith('on')) {
+        el.addEventListener(attr.substring(2), val)
+        continue
+      }
+      if (attr.startsWith('$')) {
+        if (val) el.setAttribute(attr.substring(1), '')
+        continue
+      }
+      el.setAttribute(attr, val)
+    }
+
+    for (let child of children || []) {
+      if (typeof child == 'string') {
+        child = document.createTextNode(child)
+      }
+      el.appendChild(child)
+    }
+
+    if (multiplicity)
+      el = _.range(multiplicity).map((_) => el.cloneNode(true))
+
+    return el
+  }
+</script>
+<!-- glutils.js -->
+<script>
+
+  /**
+   * TypedArray
+   * @typedef {Int8Array|Int16Array|Int32Array|BigInt64Array|Uint8Array|Uint16Array|Uint32Array|BigUint64Array|Float32Array|Float64Array} TypedArray
+   */
+  /**
+   * @param gl {WebGLRenderingContext}
+   * @param {number|ArrayBufferView|ArrayBuffer|TypedArray} data
+   * @param kind {GLenum}
+   * @param usage {GLenum}
+   */
+   function newGLBuffer(gl, data, kind = WebGLRenderingContext.ARRAY_BUFFER, usage = WebGLRenderingContext.STATIC_DRAW) {
+    let buffer = gl.createBuffer();
+    gl.bindBuffer(kind, buffer);
+
+    gl.bufferData(
+            kind,
+            data,
+            usage,
+    );
+    return buffer;
+  }
+
+   var vec3 = {
+    zero: () => {
+      return new Float32Array([0, 0, 0])
+    },
+    fromValues: (x, y, z) => {
+      return new Float32Array([x, y, z,])
+    }
+  }
+   var vec4 = {
+    zero: () => {
+      return new Float32Array([0, 0, 0, 0])
+    }
+  }
+
+   var quat = {
+    create: () => {
+      return new Float32Array([0, 0, 0, 1])
+    },
+    rotateX: (out, input, radians) => {
+      let [inX, inY, inZ, inW] = input
+      let [w, x] = [Math.cos(radians*.5), Math.sin(radians*.5)]
+
+      out[0]= inX * w + inW *x
+      out[1]=inY * w + inZ *x
+      out[2]=inZ*w-inY*x
+      out[3]=inW*w-inX*x
+      return out
+    },
+    rotateY: (out, input, radians) => {
+      let [inX, inY, inZ, inW] = input
+      let [w, y] = [Math.cos(radians * .5), Math.sin(radians * .5)]
+
+      out[0] = inX * w - inZ * y
+      out[1] = inY * w + inW * y
+      out[2] = inZ * w + inX * y
+      out[3] = inW * w - inY * y
+      return out
+    },
+    toTranslationMatrix: (input) => {
+      let [a, b, c, d] = input
+      return mat4.fromRows([
+        [2 * Math.pow(a, 2) - 1 + 2 * Math.pow(b, 2), 2 * b * c + 2 * a * d, 2 * b * d - 2 * a * c],
+        [2 * b * c - 2 * a * d, 2 * Math.pow(a, 2) - 1 + 2 * Math.pow(c, 2), 2 * c * d + 2 * a * d],
+        [2 * b * d + 2 * a * c, 2 * c * d - 2 * a * b, 2 * Math.pow(a, 2) - 1 + 2 * Math.pow(d, 2)]
+      ])
+    }
+  }
+   var mat4 = {
+    create: () => {
+      return mat4.fromRows([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ].flat())
+    },
+    perspective: (out, fovy, aspect, near, far) => {
+      let f = 1.0 / Math.tan(fovy / 2),
+              nf;
+      out[0] = f / aspect;
+      out[1] = 0;
+      out[2] = 0;
+      out[3] = 0;
+      out[4] = 0;
+      out[5] = f;
+      out[6] = 0;
+      out[7] = 0;
+      out[8] = 0;
+      out[9] = 0;
+      out[11] = -1;
+      out[12] = 0;
+      out[13] = 0;
+      out[15] = 0;
+      if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+      } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+      }
+      return out;
+    },
+    fromRotationTranslation: (out, quat, translation) => {
+      let [x, y, z, w] = quat;
+      let x2 = x + x;
+      let y2 = y + y;
+      let z2 = z + z;
+      let xx = x * x2;
+      let xy = x * y2;
+      let xz = x * z2;
+      let yy = y * y2;
+      let yz = y * z2;
+      let zz = z * z2;
+      let wx = w * x2;
+      let wy = w * y2;
+      let wz = w * z2;
+
+      let [tx, ty, tz] = translation
+      let result = mat4.fromRows([
+        [1 - (yy + zz), xy + wz, xz - wy, 0,],
+        [xy - wz, 1 - (xx + zz), yz + wx, 0],
+        [xz + wy, yz - wx, 1 - (xx + yy), 0],
+        [tx, ty, tz, 1]
+      ])
+      for (let i = 0; i < 4*4;i++) {
+        out[i] =  result[i]
+      }
+      return out
+    },
+    multiply: (out, lhs, rhs) => {
+      let lhsT = mat4.clone(lhs)
+      let rhsT = mat4.clone(rhs)
+      out[0] = lhsT[0] * rhsT[0] + lhsT[4] * rhsT[1] + lhsT[8] * rhsT[2] + lhsT[12] * rhsT[3];
+      out[1] = lhsT[1] * rhsT[0] + lhsT[5] * rhsT[1] + lhsT[9] * rhsT[2] + lhsT[13] * rhsT[3];
+      out[2] = lhsT[2] * rhsT[0] + lhsT[6] * rhsT[1] + lhsT[10] * rhsT[2] + lhsT[14] * rhsT[3];
+      out[3] = lhsT[3] * rhsT[0] + lhsT[7] * rhsT[1] + lhsT[11] * rhsT[2] + lhsT[15] * rhsT[3];
+
+      out[4] = lhsT[0] * rhsT[4] + lhsT[4] * rhsT[5] + lhsT[8] * rhsT[6] + lhsT[12] * rhsT[7];
+      out[5] = lhsT[1] * rhsT[4] + lhsT[5] * rhsT[5] + lhsT[9] * rhsT[6] + lhsT[13] * rhsT[7];
+      out[6] = lhsT[2] * rhsT[4] + lhsT[6] * rhsT[5] + lhsT[10] * rhsT[6] + lhsT[14] * rhsT[7];
+      out[7] = lhsT[3] * rhsT[4] + lhsT[7] * rhsT[5] + lhsT[11] * rhsT[6] + lhsT[15] * rhsT[7];
+
+      out[8] = lhsT[0] * rhsT[8] + lhsT[4] * rhsT[9] + lhsT[8] * rhsT[10] + lhsT[12] * rhsT[11];
+      out[9] = lhsT[1] * rhsT[8] + lhsT[5] * rhsT[9] + lhsT[9] * rhsT[10] + lhsT[13] * rhsT[11];
+      out[10] = lhsT[2] * rhsT[8] + lhsT[6] * rhsT[9] + lhsT[10] * rhsT[10] + lhsT[14] * rhsT[11];
+      out[11] = lhsT[3] * rhsT[8] + lhsT[7] * rhsT[9] + lhsT[11] * rhsT[10] + lhsT[15] * rhsT[11];
+
+      out[12] = lhsT[0] * rhsT[12] + lhsT[4] * rhsT[13] + lhsT[8] * rhsT[14] + lhsT[12] * rhsT[15];
+      out[13] = lhsT[1] * rhsT[12] + lhsT[5] * rhsT[13] + lhsT[9] * rhsT[14] + lhsT[13] * rhsT[15];
+      out[14] = lhsT[2] * rhsT[12] + lhsT[6] * rhsT[13] + lhsT[10] * rhsT[14] + lhsT[14] * rhsT[15];
+      out[15] = lhsT[3] * rhsT[12] + lhsT[7] * rhsT[13] + lhsT[11] * rhsT[14] + lhsT[15] * rhsT[15];
+    },
+    scale: (out, input, val) => {
+      let [x, y, z] = val
+      out[0] = input[0] * x
+      out[1] = input[1] * x
+      out[2] = input[2] * x
+      out[3] = input[3] * x
+
+      out[4] = input[4] * y
+      out[5] = input[5] * y
+      out[6] = input[6] * y
+      out[7] = input[7] * y
+
+      out[8] = input[8] * z
+      out[9] = input[9] * z
+      out[10] = input[10] * z
+      out[11] = input[11] * z
+
+
+      out[12] = input[12]
+      out[13] = input[13]
+      out[14] = input[14]
+      out[15] = input[15]
+      return out
+    },
+    invert: (out, input) => {
+      // https://en.wikipedia.org/wiki/Invertible_matrix
+      // https://glmatrix.net/docs/mat4.js.html
+      // https://learnwebgl.brown37.net/transformations2/transformations_introduction.html
+      let a00 = input[0],
+              a01 = input[1],
+              a02 = input[2],
+              a03 = input[3];
+      let a10 = input[4],
+              a11 = input[5],
+              a12 = input[6],
+              a13 = input[7];
+      let a20 = input[8],
+              a21 = input[9],
+              a22 = input[10],
+              a23 = input[11];
+      let a30 = input[12],
+              a31 = input[13],
+              a32 = input[14],
+              a33 = input[15];
+      let b00 = a00 * a11 - a01 * a10;
+      let b01 = a00 * a12 - a02 * a10;
+      let b02 = a00 * a13 - a03 * a10;
+      let b03 = a01 * a12 - a02 * a11;
+      let b04 = a01 * a13 - a03 * a11;
+      let b05 = a02 * a13 - a03 * a12;
+      let b06 = a20 * a31 - a21 * a30;
+      let b07 = a20 * a32 - a22 * a30;
+      let b08 = a20 * a33 - a23 * a30;
+      let b09 = a21 * a32 - a22 * a31;
+      let b10 = a21 * a33 - a23 * a31;
+      let b11 = a22 * a33 - a23 * a32;
+      // Calculate the determinant
+      let det =
+              b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+      if (!det) {
+        return null;
+      }
+      det = 1.0 / det;
+      out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+      out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+      out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+      out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+      out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+      out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+      out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+      out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+      out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+      out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+      out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+      out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+      out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+      out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+      out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+      out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+      return out;
+    },
+    transpose: (out, input) => {
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+          out[i + j * 4] = input[j + i * 4]
+        }
+      }
+      return out
+    },
+    translate: (out, input, translation) => {
+      mat4.multiply(out, out, mat4.fromColumns([
+        [1, 0, 0, translation[0]],
+        [0, 1, 0, translation[1]],
+        [0, 0, 1, translation[2]],
+        [0, 0, 0, 1],
+      ]))
+      return out
+    },
+    fromRows: (rows) => {
+      return new Float32Array(rows.flat())
+    },
+    fromColumns: (columns) => {
+      // let rows = [new Float32Array(4), new Float32Array(4), new Float32Array(4), new Float32Array(4)]
+      let out = new Float32Array(4 * 4)
+      for (let i = 0; i < 4; i++) {
+        for (let y = 0; y < 4; y++) {
+          // rows[i][y] =columns[y][i]
+          out[y + i * 4] = columns[y][i]
+        }
+      }
+      return out
+    },
+    clone: (m) => {
+      return new Float32Array(m.slice(0))
+    }
+  }
+</script>
+
+<script>
+  // import { $, _, h } from "./libjackson.js";
+  // import { newGLBuffer } from "./glutils.js";
+  // Debugging
+  // import "https://esm.sh/webgl-lint@1.10.1";
+  // import spector from "https://esm.sh/spectorjs@latest";
+
+  const insertNode = (i, x, y, last) => {
+    const p = { i, x, y }
+    if (!last) {
+      p.prev = p
+      p.next = p
+    } else {
+      p.next = last.next
+      p.prev = last
+      last.next.prev = p
+      last.next = p
+    }
+    return p
+  }
+
+  const removeNode = p => {
+    p.next.prev = p.prev
+    p.prev.next = p.next
+  }
+
+  function signedArea(data, start, end) {
+    var sum = 0;
+    for (var i = start, j = end - 2; i < end; i += 2) {
+      sum += (data[j] - data[i]) * (data[i + 1] + data[j + 1]);
+      j = i;
+    }
+    return sum;
+  }
+
+  const linkedList = data => {
+    let i, last
+
+    if (signedArea(data, 0, data.length) > 0) {
+      for (i = 0; i < data.length; i += 2) {
+        last = insertNode(i / 2, data[i], data[i + 1], last)
+      }
+    } else {
+      for (i = data.length - 2; i >= 0; i -= 2) {
+        last = insertNode(i / 2, data[i], data[i + 1], last)
+      }
+    }
+
+    return last
+  }
+
+  const isInTriangle = (a, b, c, p) =>
+          (c.x - p.x) * (a.y - p.y) - (a.x - p.x) * (c.y - p.y) >= 0 &&
+          (a.x - p.x) * (b.y - p.y) - (b.x - p.x) * (a.y - p.y) >= 0 &&
+          (b.x - p.x) * (c.y - p.y) - (c.x - p.x) * (b.y - p.y) >= 0
+  const area = (a, b, c) => (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
+
+  const isEar = ear => {
+    const a = ear.prev,
+            b = ear,
+            c = ear.next
+
+    let area1 = area(a, b, c);
+    if (area1 >= 0) return false
+
+
+    let p = ear.next.next
+
+    while (p !== ear.prev) {
+      const inTriangle = isInTriangle(a, b, c, p)
+      if (inTriangle && area(p.prev, p, p.next) >= 0) return false
+      p = p.next
+    }
+    return true
+  }
+
+  const earcut = ear => {
+    const triangles = []
+    let next = ear.next,
+            prev = ear.prev,
+            stop = ear
+
+    while (prev !== next) {
+      prev = ear.prev
+      next = ear.next
+
+      if (isEar(ear)) {
+        triangles.push(prev.i, ear.i, next.i)
+        removeNode(ear)
+        ear = next
+        stop = next
+        continue
+      }
+
+      ear = next
+      if (ear === stop) {
+        throw new Error('triangulation failed')
+      }
+    }
+    return triangles
+  }
+
+  /**
+   * @typedef MyWebGLContext {WebGL2RenderingContext WebGLRenderingContext}
+   */
+  /**
+   * @typedef UniformLocations {cameraPos: WebGLUniformLocation, normalMatrix: WebGLUniformLocation, lightPosition: WebGLUniformLocation[], projectionMatrix: WebGLUniformLocation, uSampler: WebGLUniformLocation, modelViewMatrix: WebGLUniformLocation}
+   * @typedef AttributeLocations {vertexNormal: GLint, textureCoord: GLint, vertexPosition: GLint}
+   * @typedef Locations {uniform: UniformLocations, attribute: AttributeLocations}
+   */
+
+  class Vector3 {
+    x = 0.0;
+    y = 0.0;
+    z = 0.0;
+
+    constructor(x, y, z) {
+      this.x = x ?? 0;
+      this.y = y ?? 0;
+      this.z = z ?? 0;
+    }
+
+    get xyz() {
+      return [this.x, this.y, this.z];
+    }
+  }
+
+   class Shape {
+    vertexCount = 0;
+    data = []
+
+    /** @type {WebGLBuffer} */
+
+    /**
+     * @param {MyWebGLContext} gl
+     * @param color {Vector3}
+     */
+    constructor(gl, data, fill = true) {
+      this.fill = fill
+      this.gl = gl;
+      this.data = data ?? []
+      // let points = earcut(linkedList(this.data)).flatMap(i => [this.data[2 * i], this.data[2 * i + 1], 0])
+      // this.vertexCount = points.length / 3
+      this.positionBuffer = newGLBuffer(gl, new Float32Array(data ?? []));
+      this.vertexCount = data?.length / 3 ?? 0
+
+      // let colors = [];
+      // for (let i = 0; i < this.vertexCount; i++) {
+      //     colors = colors.concat(...color.xyz, 1);
+      // }
+
+      // this.colorBuffer = newGLBuffer(gl, new Float32Array(colors));
+
+    }
+
+    #triangulate() {
+      let points
+      if (this.fill) {
+
+        points = earcut(linkedList(this.data)).flatMap(i => [this.data[2 * i], this.data[2 * i + 1], 0])
+      } else {
+        points = _.chunk(this.data, 2).flatMap((([x, y]) => [x, y, 0]))
+      }
+      this.vertexCount = points.length / 3
+      this.gl.deleteBuffer(this.positionBuffer)
+      this.positionBuffer = newGLBuffer(this.gl, new Float32Array(points))
+
+    }
+
+    addPoint(x, y) {
+      this.data.push(x, y)
+      this.#triangulate()
+    }
+
+    popPoint() {
+      this.data.pop()
+      this.#triangulate()
+    }
+
+    setPoints(data) {
+      this.data = data
+      this.#triangulate()
+    }
+
+    setPositionAttribute(gl, locations) {
+      const componentWidth = 3;
+      const type = gl.FLOAT;
+      const normalize = false;
+      const stride = 0;
+      const offset = 0;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+      gl.vertexAttribPointer(
+              locations.vertexPosition,
+              componentWidth,
+              type,
+              normalize,
+              stride,
+              offset
+      );
+
+      gl.enableVertexAttribArray(locations.vertexPosition);
+    }
+  }
+
+
+   class Line extends Shape {
+    constructor(gl, p1, p2) {
+      super(gl, Line.#makePoints(p1, p2), false)
+      this.p1 = p1
+      this.p2 = p2
+      this.vertexCount = 3
+    }
+
+    static #makePoints(p1, p2) {
+      let [x1, y1] = p1
+      let [x2, y2] = p2
+      return [
+        x1, y1, 0,
+        x2, y2, 0,
+        x1, y1, 0,
+      ]
+    }
+
+    setP2(p2) {
+      this.data = Line.#makePoints(this.p1, p2)
+      this.p2 = p2
+      this.#updateAttrs()
+    }
+
+
+    #updateAttrs() {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+      this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, new Float32Array(this.data), 0)
+    }
+  }
+
+   class Box extends Shape {
+    constructor(gl, p1, p2, fill = true) {
+      super(gl, Box.#makePoints(p1, p2, fill), fill)
+      this.p1 = p1
+      this.p2 = p2
+    }
+
+    static #makePoints(p1, p2, fill) {
+      let [x1, y1] = p1
+      let [x2, y2] = p2
+      if (fill) {
+        return [
+          x1, y1, 0,
+          x2, y1, 0,
+          x2, y2, 0,
+
+          x1, y1, 0,
+          x2, y2, 0,
+          x1, y2, 0,
+        ]
+      } else {
+        return [
+          x1, y1, 0,
+          x2, y1, 0,
+          x2, y2, 0,
+          x1, y2, 0,
+        ]
+      }
+    }
+
+    setP2(p2) {
+      this.data = Box.#makePoints(this.p1, p2, this.fill)
+      this.p2 = p2
+      this.#updateAttrs()
+    }
+
+
+    #updateAttrs() {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+      this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, new Float32Array(this.data), 0)
+    }
+  }
+
+
+   class Triangle extends Shape {
+    constructor(gl, p1, p2, p3, fill) {
+      super(gl, Triangle.#makePoints(p1, p2, p3), fill)
+      this.p1 = p1
+      this.p2 = p2
+      this.p3 = p3
+      this.vertexCount = 3
+    }
+
+    static #makePoints(p1, p2, p3) {
+      let [x1, y1] = p1
+      let [x2, y2] = p2
+      let [x3, y3] = p3
+      return [
+        x1, y1, 0,
+        x2, y2, 0,
+        x3, y3, 0,
+      ]
+    }
+
+    setP2(p2) {
+      this.data = Triangle.#makePoints(this.p1, p2, this.p3)
+      this.p2 = p2
+      this.#updateAttrs()
+    }
+
+    setP3(p3) {
+      this.data = Triangle.#makePoints(this.p1, this.p2, p3)
+      this.p3 = p3
+      this.#updateAttrs()
+    }
+
+
+    #updateAttrs() {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+      this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, new Float32Array(this.data), 0)
+    }
+  }
+
+   class Circle extends Shape {
+    constructor(gl, center, r, fill) {
+      super(gl, Circle.#makePoints(center, r, fill), fill)
+      this.center = center
+      this.r = r
+      this.vertexCount = this.data.length / 3
+    }
+
+    static #makePoints(center, r, fill) {
+      let [x, y] = center
+      if (r === 0) {
+        return []
+      }
+      let count = 36
+      let perimiter = _.range(0, count).flatMap(i => [
+        r * Math.cos(i / count * Math.PI * 2) + x,
+        r * Math.sin(i / count * Math.PI * 2) + y
+      ])
+
+      if (!fill) { return _.chunk(perimiter, 2).flatMap(([x, y]) => [x, y, 0]) }
+
+      let points = earcut(linkedList(perimiter)).flatMap(i => [perimiter[2 * i], perimiter[2 * i + 1], 0])
+
+      return points
+    }
+
+    setR(r) {
+      this.data = Circle.#makePoints(this.center, r, this.fill)
+      this.r = r
+      this.#updateAttrs()
+    }
+
+
+    #updateAttrs() {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+      // console.log("current sisze", this.gl.getBufferParameter(this.gl.ARRAY_BUFFER, this.gl.BUFFER_SIZE))
+      if (this.gl.getBufferParameter(this.gl.ARRAY_BUFFER, this.gl.BUFFER_SIZE) === this.data) {
+        this.gl.bufferSubData(this.gl.ARRAY_BUFFER, 0, new Float32Array(this.data), 0)
+      } else {
+        this.gl.deleteBuffer(this.positionBuffer)
+        this.positionBuffer = newGLBuffer(this.gl, new Float32Array(this.data))
+      }
+    }
+  }
+
+
+  // An object based on a Shape and a Material
+  class Mesh {
+    /**
+     * @param {Shape} shape
+     */
+    constructor(shape, color, fill = true) {
+      this.shape = shape;
+      this.color = color
+    }
+
+
+    /**
+     * @param gl {WebGL2RenderingContext}
+     */
+    render(gl, locations, wireframe) {
+      let shape = this.shape
+      shape.setPositionAttribute(gl, locations.attribute);
+      // shape.setColorAttribute(gl, locations);
+      gl.bindBuffer(gl.ARRAY_BUFFER, shape.positionBuffer);
+
+      gl.uniform4f(locations.uniform.color, this.color.x, this.color.y, this.color.z, 1)
+
+      // gl.drawElements(gl.TRIANGLE_STRIP, shape.vertexCount, gl.UNSIGNED_SHORT, 0);
+
+      if (shape.vertexCount === 0) {
+        return
+      }
+
+      if (shape.fill) {
+        gl.uniform1i(locations.uniform.debug, 0)
+        gl.drawArrays(gl.TRIANGLES, 0, shape.vertexCount);
+        if (wireframe) {
+
+          gl.uniform1i(locations.uniform.debug, 1)
+          gl.drawArrays(gl.LINE_LOOP, 0, shape.vertexCount);
+        }
+      } else {
+        gl.uniform1i(locations.uniform.debug, 0)
+        gl.drawArrays(gl.LINE_LOOP, 0, shape.vertexCount);
+      }
+      // gl.drawArrays(gl.LINES, 0, shape.vertexCount);
+
+
+    }
+  }
+
+   class Scene {
+    objects = [];
+
+    /**
+     * @param obj {Object3d}
+     */
+    add(obj) {
+      this.objects.push(obj);
+    }
+  }
+
+   class Renderer {
+    ctx;
+    scene;
+
+    /**
+     * @param {Scene} scene
+     * @param {MyWebGLContext} ctx
+     */
+    constructor(scene, ctx) {
+      this.scene = scene;
+      this.gl = ctx;
+
+      // Generate program
+      let vsShader = this.#createVertexShaderSource(this.scene);
+      let fsShader = this.#createFragmentShaderSource(this.scene);
+      this.program = this.#compileShaderProgram(vsShader, fsShader);
+
+      this.locations = this.#getLocations();
+    }
+
+
+    #createVertexShaderSource(_scene) {
+      return `
+        #version 300 es
+        in vec4 aVertexPosition;
+
+
+        out vec4 vPosition;
+
+        void main() {
+            gl_Position = aVertexPosition;
+            vPosition = gl_Position;
+        //    vColor = aVertexColor;
+        }
+    `.trim();
+    }
+
+    #createFragmentShaderSource(_scene) {
+      return `
+    #version 300 es
+    precision mediump float;
+
+    float scale(float x, float inMin, float inMax, float outMin, float outMax) {
+        return ((x - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin;
+    }
+
+    out vec4 outColor;
+
+        uniform bool uDebug;
+        uniform vec4 uColor;
+
+    in vec4 vPosition;
+
+    void main() {
+    if (uDebug) {
+        outColor = vec4(1, 0,0,1);
+    } else {
+    //   outColor = vec4(scale(vPosition.x, -1.0, 1.0, 0.0, 1.0), scale(vPosition.y, -1.0, 1.0, 0.0, 1.0), scale(vPosition.z, -1.0, 1.0, 0.0, 1.0), 1.0);
+    outColor= uColor;
+      }
+
+    }
+    `.trim();
+    }
+
+    #compileShaderProgram(vsSource, fsSource) {
+      const vertexShader = this.#loadShader(this.gl, this.gl.VERTEX_SHADER, vsSource);
+      const fragmentShader = this.#loadShader(this.gl, this.gl.FRAGMENT_SHADER, fsSource);
+
+      const shaderProgram = this.gl.createProgram();
+      this.gl.attachShader(shaderProgram, vertexShader);
+      this.gl.attachShader(shaderProgram, fragmentShader);
+      this.gl.linkProgram(shaderProgram);
+
+      if (!this.gl.getProgramParameter(shaderProgram, this.gl.LINK_STATUS)) {
+        alert(`Failed to init shader program ${this.gl.getProgramInfoLog(shaderProgram)}`);
+        return null;
+      }
+
+      return shaderProgram;
+    }
+
+    #loadShader(gl, type, source) {
+      const shader = gl.createShader(type);
+
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        alert(`Failed to compile shader ${gl.getShaderInfoLog(shader)}`);
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    render(wireframe) {
+      let gl = this.gl;
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clearDepth(1.0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      gl.useProgram(this.program);
+
+      for (let obj of this.scene.objects) {
+        obj.render(gl, this.locations, wireframe);
+      }
+    }
+
+
+    /**
+     *
+     * @returns {Locations}
+     */
+    #getLocations() {
+      let attribute = {
+        vertexPosition: this.gl.getAttribLocation(this.program, "aVertexPosition"),
+      };
+      let uniform = {
+        color: this.gl.getUniformLocation(this.program, "uColor"),
+        debug: this.gl.getUniformLocation(this.program, "uDebug"),
+      };
+
+      return {
+        uniform,
+        attribute
+      };
+    }
+  }
+
+  class Tool {
+    constructor(gl, scene, appState) {
+      this.gl = gl
+      this.scene = scene
+      this.appState = appState
+    }
+
+    get color() {
+      return this.appState.currentColor
+    }
+
+    click(x, y) { return true }
+    move(x, y) { }
+    contextmenu(x, y, e) { }
+  }
+
+  class BoxTool extends Tool {
+    p1
+    p2
+    tmpBox = null
+    mesh = null
+    click(x, y) {
+      if (!this.p1) {
+        this.p1 = [x, y]
+        this.tmpBox = new Box(this.gl, this.p1, this.p1, this.appState.fill)
+        this.mesh = new Mesh(this.tmpBox, this.color)
+        this.scene.add(this.mesh)
+        console.log("point 1, rendered")
+        return false
+      } else if (this.p1 && !this.p2) {
+        this.p2 = [x, y]
+        this.tmpBox.setP2(this.p2)
+        console.log("point 2, rendered, done")
+        return true
+      }
+    }
+
+    move(x, y) {
+      if (this.p1 && !this.p2) {
+        this.tmpBox.setP2([x, y])
+      }
+    }
+
+  }
+
+  class LineTool extends Tool {
+    p1
+    p2
+    tmp = null
+    mesh = null
+    click(x, y) {
+      if (!this.p1) {
+        this.p1 = [x, y]
+        this.tmp = new Line(this.gl, this.p1, this.p1)
+        this.mesh = new Mesh(this.tmp, this.color)
+        this.scene.add(this.mesh)
+        console.log("point 1, rendered")
+        return false
+      } else if (this.p1 && !this.p2) {
+        this.p2 = [x, y]
+        this.tmp.setP2(this.p2)
+        console.log("point 2, rendered, done")
+        return true
+      }
+    }
+
+    move(x, y) {
+      if (this.p1 && !this.p2) {
+        this.tmp.setP2([x, y])
+      }
+    }
+
+  }
+
+
+  class TriangleTool extends Tool {
+    p1
+    p2
+    p3
+    tmp = null
+    mesh = null
+    click(x, y) {
+      if (!this.p1) {
+        this.p1 = [x, y]
+        this.tmp = new Triangle(this.gl, this.p1, this.p1, this.p1, this.appState.fill)
+        this.mesh = new Mesh(this.tmp, this.color)
+        this.scene.add(this.mesh)
+        console.log("point 1, rendered")
+        return false
+      } else if (!this.p2 && !this.p3) {
+        this.p2 = [x, y]
+        this.tmp.setP2(this.p2)
+        console.log("point 2, rendered")
+        return false
+      } else if (!this.p3) {
+        this.p3 = [x, y]
+        this.tmp.setP3(this.p3)
+        console.log("point 3, rendered, done")
+        return true
+      }
+    }
+
+    move(x, y) {
+      if (this.p1 && !this.p2 && !this.p3) {
+        this.tmp.setP2([x, y])
+      } else if (this.p1 && this.p2 && !this.p3) {
+        this.tmp.setP3([x, y])
+      }
+    }
+
+  }
+
+
+  class NGonTool extends Tool {
+    points = []
+    cursor = null
+    constructor(gl, scene, appState) {
+      super(gl, scene, appState)
+    }
+
+    click(x, y) {
+      if (!this.tmp) {
+        this.tmp = new Shape(this.gl, [], this.appState.fill)
+        this.mesh = new Mesh(this.tmp, this.color)
+        this.scene.add(this.mesh)
+      }
+      this.points.push([x, y])
+      this.tmp.setPoints(this.points.flat())
+      return false
+    }
+
+    move(x, y) {
+      this.tmp.setPoints([...this.points.flat(), x, y])
+    }
+
+    contextmenu(x, y, e) {
+      e.preventDefault()
+      this.tmp.setPoints(this.points.flat())
+      return true
+    }
+  }
+
+  class CircleTool extends Tool {
+    p1
+    tmp = null
+    mesh = null
+    click(x, y) {
+      if (!this.p1) {
+        this.p1 = [x, y]
+        this.tmp = new Circle(this.gl, this.p1, 0.1, this.appState.fill)
+        this.mesh = new Mesh(this.tmp, this.color)
+        this.scene.add(this.mesh)
+        console.log("point 1, rendered")
+        return false
+      } else if (this.p1 && !this.p2) {
+        this.p2 = [x, y]
+        this.tmp.setR(_.manhattan(this.p1, [x, y]))
+        console.log("point 2, rendered, done")
+        return true
+      }
+    }
+
+    move(x, y) {
+      if (this.p1 && !this.p2) {
+        this.tmp.setR(_.manhattan(this.p1, [x, y]))
+      }
+    }
+  }
+
+
+  function go() {
+    /** @type {HTMLCanvasElement} */
+    let canvas = $("canvas");
+    let ctx = canvas.getContext("webgl2");
+
+    let appState = {
+      currentColor: new Vector3(0, 0, 1),
+      lastPoint: null,
+      fill: true,
+      debug: false,
+    }
+    let scene = new Scene();
+
+
+    appState.currentTool = new BoxTool(ctx, scene, appState)
+
+    let renderer = new Renderer(scene, ctx);
+    // renderer.render(wireframe);
+    window["r"] = renderer;
+    window["s"] = scene;
+    let then = 0;
+    let rot = 0;
+
+    let inputs = {}
+
+    function render(now) {
+      now *= 0.001;
+      let deltaTime = now - then;
+      then = now;
+
+      rot += deltaTime;
+
+      renderer.render(appState.debug);
+      requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+    if (window.location.search.endsWith("?debug")) {
+      var SPECTOR = new spector.Spector();
+      SPECTOR.displayUI();
+    }
+
+    document.addEventListener('keydown', ev => {
+      let key = ev.key;
+      if (key === "q") {
+        setCurrentTool("box")
+      } else if (key === "w") {
+        setCurrentTool("line")
+      } else if (key === "e") {
+        setCurrentTool("circle")
+      } else if (key === "r") {
+        setCurrentTool("triangle")
+      } else if (key === "t") {
+        setCurrentTool("ngon")
+      }
+      renderUi()
+      inputs[key] = true
+    })
+    document.addEventListener('keyup', ev => {
+      inputs[ev.key] = false
+    })
+
+
+    function getCursorPosition(canvas, event) {
+      let b = canvas.getBoundingClientRect()
+      let scale = canvas.width / b.width
+      let x = (event.clientX - b.left) * scale
+      let y = (event.clientY - b.top) * scale
+      x = _.scale(x, 0, 640, -1, 1)
+      y = _.scale(y, 0, 480, 1, -1)
+      return [x, y]
+    }
+
+    canvas.addEventListener('contextmenu', (e) => {
+      let [x, y] = getCursorPosition(canvas, e)
+      let v = appState.currentTool.contextmenu(x, y, e)
+      if (v) {
+        console.log("tool complete")
+        appState.currentTool = new appState.currentTool.constructor(ctx, scene, appState)
+      }
+    })
+
+    canvas.addEventListener('mousemove', (e) => {
+      appState.currentTool.move(...getCursorPosition(canvas, e))
+    })
+
+    canvas.addEventListener('click', (e) => {
+      let [x, y] = getCursorPosition(canvas, e)
+      let screen = [x, y]
+      console.log(screen)
+
+      let v = appState.currentTool.click(x, y, e)
+      if (v) {
+        console.log("tool complete")
+        appState.currentTool = new appState.currentTool.constructor(ctx, scene, appState)
+      }
+    })
+
+    let toolMap = {
+      "box": () => new BoxTool(ctx, scene, appState),
+      "line": () => new LineTool(ctx, scene, appState),
+      "circle": () => new CircleTool(ctx, scene, appState),
+      "triangle": () => new TriangleTool(ctx, scene, appState),
+      "ngon": () => new NGonTool(ctx, scene, appState),
+    }
+
+    function setCurrentTool(name) {
+      appState.currentTool = (toolMap[name])()
+      appState.currentTool.name = name
+    }
+
+    function vecToHtml(vec) {
+      return `#${(vec.x * 255).toString(16).padStart(2, "0")}${(vec.y * 255).toString(16).padStart(2, "0")}${(vec.z * 255).toString(16).padStart(2, "0")}`
+    }
+
+    let colorNode;
+    let renderUi = () => {
+      let makeTool = (title, value) => {
+        return h(`option{${title}}`, { value, $selected: appState.currentTool.name === value })
+      }
+      $("#ui-root").replaceWith(h("div.ui#ui-root", [
+        h("label{Shape}", { for: 'shape' }),
+        h("select#shape", {
+          onchange: (e) => {
+            setCurrentTool(e.target.options[e.target.selectedIndex].attributes.value.value)
+          }
+        }, [
+          makeTool("Box (q)", "box"),
+          makeTool("Line (w)", "line"),
+          makeTool("Circle (e)", "circle"),
+          makeTool("Triangle (r)", "triangle"),
+          makeTool("N-gon (t)", "ngon"),
+        ]),
+        h('br'),
+        h("label{Fill}", { for: 'fill' }),
+        h("input#fill", {
+          type: "checkbox", $checked: true, oninput: (e) => {
+            appState.fill = e.target.checked
+          }
+        }),
+        h("label{Color}", { for: 'color' }),
+        colorNode = h("input#color", {
+          type: "color", value: vecToHtml(appState.currentColor), oninput: (e) => {
+            appState.currentColor = new Vector3(..._.chunk(colorNode.value.substring(1), 2).map(p => parseInt(p, 16) / 255))
+          }
+        }),
+        h("label{Wireframe}", { for: 'debug' }),
+        h("input#debug", {
+          type: "checkbox", $checked: appState.debug, oninput: (e) => {
+            appState.debug = e.target.checked
+          }
+        }),
+      ]))
+    }
+    renderUi()
+  }
+
+  go();
+
+</script>
+</body>
+</html>
